@@ -249,7 +249,7 @@ def test_place_order(symbol: str, price: float, tp: float, sl: float, order_kind
     price = round_step_size(price, float(pairs_data[symbol]['PRICE_FILTER']))
     tp = round_step_size(tp, float(pairs_data[symbol]['PRICE_FILTER']))
     sl = round_step_size(sl, float(pairs_data[symbol]['PRICE_FILTER']))
-    hour = datetime.fromtimestamp(int(timestamp)/1000).hour
+    hour = datetime.fromtimestamp(int(timestamp)/1000)
     trading_pairs.append(dict(symbol=symbol, price=price, tp=tp, sl=sl, ok=order_kind, time=hour))
     return True
 
@@ -263,8 +263,8 @@ def test_check_orders(symbol: str, price: float, tp: float, sl: float, order_kin
         elif candles.loc[length-1, 'high'] > tp:
             result = (tp - price) / price * 100
     else:
-        if candles.loc[length-1, 'low'] < tp:
-            result = (price - tp) / price * 100
-        elif candles.loc[length-1, 'high'] > sl:
+        if candles.loc[length-1, 'high'] > sl:
             result = -(sl - price) / price * 100
+        elif candles.loc[length-1, 'low'] < tp:
+            result = (price - tp) / price * 100
     return result
