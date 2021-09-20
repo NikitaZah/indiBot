@@ -47,7 +47,7 @@ def test_triple_strategy():
     start = 0
     end = 350
     while end <= testing:
-        if start % 24 == 0:
+        if start % 8 == 0:
             volatile_pairs = []
             for pair in tqdm(all_pairs, desc='selecting pairs'):
                 candles = pairs[pair].iloc[start:end].reset_index(drop=True)
@@ -73,7 +73,7 @@ def test_triple_strategy():
         for pair in tqdm(trading_pairs, desc='checking trading pairs'):
             candles = pairs[pair['symbol']].iloc[start:end].reset_index(drop=True)
             test_res = test_check_orders(pair['symbol'], pair['price'], pair['tp'], pair['sl'], pair['ok'],
-                                         pairs[pair['symbol']].iloc[start:end])
+                                         candles)
             if test_res:
                 stat.append([pair['symbol'], pair['time'], pair['ok'], test_res])
                 print(stat[-1])
