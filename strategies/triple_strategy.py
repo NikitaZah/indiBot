@@ -40,10 +40,10 @@ def test_triple_strategy():
 
     time_start = time.time()
     for symbol in tqdm(all_pairs, desc='getting pairs data'):
-        candles = get.candles(client, symbol, '5m', limit=testing)
+        candles = get.candles(client, symbol, '15m', limit=testing)
         pairs[symbol] = candles
-        # if candles['open_time'].size < 30000:
-        #     print(f'pair {pair} only has {candles["open_time"].size} candles')
+        if candles['open_time'].size < testing:
+            print(f'pair {symbol} only has {candles["open_time"].size} candles')
     start = 0
     end = 350
     while end <= testing:
@@ -51,7 +51,7 @@ def test_triple_strategy():
             volatile_pairs = []
             for pair in tqdm(all_pairs, desc='selecting pairs'):
                 candles = pairs[pair].iloc[start:end].reset_index(drop=True)
-                if get.appropriate(pair, candles, '5m', volatile=0):
+                if get.appropriate(pair, candles, '15m', volatile=0):
                     volatile_pairs.append(pair)
             print(f'start = {start}\ntime spent: {round(time.time()-time_start, 2)}sec')
 
@@ -99,6 +99,9 @@ def test_triple_strategy():
                 trading_pairs.remove(pair)
         start += 1
         end += 1
+
+    if trading_pairs:
+        print(f'\n{len(trading_pairs)} were open\n')
 
     print(f'testing finished.\nTotal deals: {total_win+total_lose}\nTotal win: {total_win}\nTotal lose: {total_lose}\n'
           f'Total result: {total_res}\nMax upstream: {max_up}\nMax downstream: {max_down}')
