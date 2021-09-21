@@ -251,8 +251,8 @@ def test_place_order(symbol: str, price: float, tp: float, sl: float, order_kind
     price = round_step_size(price, float(pairs_data[symbol]['PRICE_FILTER']))
     tp = round_step_size(tp, float(pairs_data[symbol]['PRICE_FILTER']))
     sl = round_step_size(sl, float(pairs_data[symbol]['PRICE_FILTER']))
-    hour = datetime.fromtimestamp(int(timestamp)/1000).hour
-    trading_pairs.append(dict(symbol=symbol, price=price, tp=tp, sl=sl, ok=order_kind, time=hour))
+    trade_time = datetime.fromtimestamp(int(timestamp)/1000)
+    trading_pairs.append(dict(symbol=symbol, price=price, tp=tp, sl=sl, ok=order_kind, time=trade_time))
     return True
 
 
