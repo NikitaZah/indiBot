@@ -171,20 +171,23 @@ def signal(pair: dict):
     points.sort()
 
     last_close = pair['candles'].loc[length-2, 'close']
+    current_price = pair['candles'].loc[length-1, 'open']
     if pair['trend'] == 1:
         if last_close > points[1]:
             if last_close > points[2]:
                 sl = points[1]
             else:
                 sl = points[0]
-            tp = last_close + 1.5 * (last_close - sl)
+            tp = current_price + 1.5 * (last_close - sl)
+            print(f'curr = {current_price}, sl = {sl}, tp = {tp}')
     else:
         if last_close < points[1]:
             if last_close < points[0]:
                 sl = points[1]
             else:
                 sl = points[2]
-            tp = last_close - 1.5 * (sl - last_close)
+            tp = current_price - 1.5 * (sl - last_close)
+
     return tp, sl
 
 
