@@ -12,6 +12,7 @@ from binance.helpers import round_step_size
 from binance.client import Client
 from datetime import datetime
 import time
+import os
 
 deposit = 150
 dollars = 30
@@ -105,9 +106,23 @@ def test_triple_strategy():
 
     print(f'testing finished.\nTotal deals: {total_win+total_lose}\nTotal win: {total_win}\nTotal lose: {total_lose}\n'
           f'Total result: {total_res}\nMax upstream: {max_up}\nMax downstream: {max_down}')
-    statistics = pd.DataFrame(stat, columns=['symbol', 'hour', 'deal_type', 'result'])
-    print(f'ful statisticks will be available at ...\n{statistics}')
-    statistics.to_pickle(filename)
+    statistics = pd.DataFrame(stat, columns=['symbol', 'datetime', 'deal_type', 'result'])
+    print(f'\n{statistics}')
+    try:
+        statistics.to_pickle(filename)
+    except FileNotFoundError:
+        print(f'Cannot find directory {filename} to save the database. Trying to create...')
+        folder = '/statistics'
+        curr_path = os.getcwd()
+        full_dir_name = curr_path + folder
+        try:
+            os.mkdir(full_dir_name)
+            statistics.to_pickle(filename)
+            print('Directory created successfully')
+        except OSError as err:
+            print(f'Creation of the directory failed because of {err}\n')
+
+    print(f'full statistics will be available at {filename}')
 
 
 def triple_strategy():
