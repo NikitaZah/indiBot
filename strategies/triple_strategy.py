@@ -66,7 +66,8 @@ def test_triple_strategy():
             tp, sl = signal(pair)
             if not tp:
                 continue
-            price = get.price(pair['candles']['close'])
+            length = pair['candles']['close'].size
+            price = get.price(pair['candles']['close'].iloc[:length-1])
             placed = test_place_order(pair['symbol'], price, tp, sl, pair['trend'],
                                       pairs[pair['symbol']].loc[end-1, 'open_time'])
 
