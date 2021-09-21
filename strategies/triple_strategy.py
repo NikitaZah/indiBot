@@ -45,8 +45,7 @@ def test_triple_strategy():
         if candles['open_time'].size < testing:
             print(f'pair {symbol} only has {candles["open_time"].size} candles')
     start = 0
-    end = 350
-    while end <= testing:
+    for end in tqdm(range(350, testing), desc='progress'):
         if start % 8 == 0:
             volatile_pairs = []
             for pair in tqdm(all_pairs, desc='selecting pairs'):
@@ -98,7 +97,6 @@ def test_triple_strategy():
                 total_res += test_res
                 trading_pairs.remove(pair)
         start += 1
-        end += 1
 
     if trading_pairs:
         print(f'\n{len(trading_pairs)} were open\n')
@@ -179,7 +177,6 @@ def signal(pair: dict):
             else:
                 sl = points[0]
             tp = current_price + 1.5 * (last_close - sl)
-            print(f'curr = {current_price}, sl = {sl}, tp = {tp}')
     else:
         if last_close < points[1]:
             if last_close < points[0]:
@@ -252,7 +249,7 @@ def test_place_order(symbol: str, price: float, tp: float, sl: float, order_kind
     price = round_step_size(price, float(pairs_data[symbol]['PRICE_FILTER']))
     tp = round_step_size(tp, float(pairs_data[symbol]['PRICE_FILTER']))
     sl = round_step_size(sl, float(pairs_data[symbol]['PRICE_FILTER']))
-    hour = datetime.fromtimestamp(int(timestamp)/1000)
+    hour = datetime.fromtimestamp(int(timestamp)/1000).hour
     trading_pairs.append(dict(symbol=symbol, price=price, tp=tp, sl=sl, ok=order_kind, time=hour))
     return True
 
