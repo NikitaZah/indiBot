@@ -38,21 +38,22 @@ def test_triple_strategy():
     total_lose = 0
     total_res = 0
 
-    time_start = time.time()
     for symbol in tqdm(all_pairs, desc='getting pairs data'):
         candles = get.candles(client, symbol, '15m', limit=testing)
         pairs[symbol] = candles
         if candles['open_time'].size < testing:
             print(f'pair {symbol} only has {candles["open_time"].size} candles')
     start = 0
-    for end in tqdm(range(350, testing), desc='progress'):
+    time_start = time.time()
+    for end in range(350, testing+1):
+        if start % 10 == 0:
+            print(f'start = {start}\ntime spent: {round(time.time() - time_start, 2)}sec')
         if start % 8 == 0:
             volatile_pairs = []
             for pair in tqdm(all_pairs, desc='selecting pairs'):
                 candles = pairs[pair].iloc[start:end].reset_index(drop=True)
                 if get.appropriate(pair, candles, '15m', volatile=0):
                     volatile_pairs.append(pair)
-            print(f'start = {start}\ntime spent: {round(time.time()-time_start, 2)}sec')
 
         trend_pairs = []
 
