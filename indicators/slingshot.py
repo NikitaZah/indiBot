@@ -1,16 +1,9 @@
 from indicators.lines import ewm
+import pandas as pd
 
 
-def slingshot(data: list):
+def slingshot(data: pd.DataFrame):
     ema_slow = ewm(data, 62)
     ema_fast = ewm(data, 38)
-
-    trend = []
-    len_diff = len(ema_fast)-len(ema_slow)
-
-    for i in range(len(ema_slow)):
-        if ema_fast[i+len_diff] >= ema_slow[i]:
-            trend.append(1)     # UpTrend
-        else:
-            trend.append(-1)    # DownTrend
+    trend = (ema_fast-ema_slow).dropna()
     return trend

@@ -1,7 +1,7 @@
 from indicators import lines, stochRSI, supertrend
 from tqdm import tqdm
 import get
-from data import client_n as client, all_pairs, pairs_data
+from data import client_v as client, all_pairs, pairs_data
 import time
 import pandas as pd
 import numpy as np
@@ -14,9 +14,9 @@ from datetime import datetime
 import time
 import os
 
-deposit = 150
-dollars = 30
-leverage = 5
+deposit = 743.86278555
+dollars = 10
+leverage = 1
 trading_pairs = []
 
 
@@ -131,8 +131,8 @@ def triple_strategy():
         start = time.time()
         volatile_pairs = []
         for pair in tqdm(all_pairs, desc='selecting pairs'):
-            candles = get.candles(client, pair, '5m', limit=1000)
-            if get.appropriate(pair, candles, '5m', volatile=0):
+            candles = get.candles(client, pair, '15m', limit=500)
+            if get.appropriate(pair, candles, '15m', volatile=0):
                 volatile_pairs.append([pair, candles])
 
         trend_pairs = []
@@ -143,12 +143,11 @@ def triple_strategy():
 
         print(f'\ntrend pairs: {len(trend_pairs)}')
         for pair in trend_pairs:
-            print(pair['symbol'])
             tp, sl = signal(pair)
-            if not tp:
-                continue
-            placed = place_order(pair['symbol'], get.price(pair['candles']['close']), tp, sl, pair['trend'])
-
+            if tp:
+                placed = place_order(pair['symbol'], get.price(pair['candles']['close']), tp, sl, pair['trend'])
+                if not placed:
+                    print(f'failed to open position for {pair["symbol"]}. tp={tp}, sl={sl}, order kind={pair["trend"]}')
 
         update_time = get.refresh_time(volatile_pairs[0][1]['close_time'])
         while int(client.get_server_time()["serverTime"]) < update_time:
@@ -162,9 +161,9 @@ def apply_status(pair: str, pair_data: pd.DataFrame):
     k_line, d_line = stochRSI.stoch_rsi(pair_data, 14)
 
     length = pair_data['open_time'].size
-    if pair_data.iloc[length-1, 5] > ema200[ema200.size-1] and d_line[d_line.size-1] < k_line[k_line.size-1] < 30:
+    if pair_data.iloc[length-1, 5] > ema200[ema200.size-1] and d_line[d_line.size-1] < k_line[k_line.size-1] < 25:
         pair_trend = 1
-    elif pair_data.iloc[length-1, 5] < ema200[ema200.size-1] and d_line[d_line.size-1] > k_line[k_line.size-1] > 70:
+    elif pair_data.iloc[length-1, 5] < ema200[ema200.size-1] and d_line[d_line.size-1] > k_line[k_line.size-1] > 75:
         pair_trend = -1
     else:
         return None
@@ -208,11 +207,15 @@ def signal(pair: dict):
 def place_order(symbol: str, price: float, tp: float, sl: float, order_kind: int):
     global trading_pairs
     qty = round_step_size(dollars * leverage / price, float(pairs_data[symbol]['MARKET_LOT_SIZE']))
+    if qty <= 0:
+        return False
+    tp = round_step_size(tp, float(pairs_data[symbol]['PRICE_FILTER']))
+    sl = round_step_size(sl, float(pairs_data[symbol]['PRICE_FILTER']))
     side = Client.SIDE_BUY if order_kind == 1 else Client.SIDE_SELL
     close_side = Client.SIDE_SELL if order_kind == 1 else Client.SIDE_BUY
 
     order = None
-    for i in range(30):
+    for i in range(10):
         try:
             order = client.futures_create_order(symbol=symbol, side=side,
                                                 type=Client.ORDER_TYPE_MARKET, quantity=qty)
@@ -224,12 +227,11 @@ def place_order(symbol: str, price: float, tp: float, sl: float, order_kind: int
         return False
     while True:
         try:
-            sl_order = client.futures_create_order(symbol=symbol, side=close_side, stopPrice=sl,
-                                                   closePosition=True,
+            sl_order = client.futures_create_order(symbol=symbol, side=close_side, stopPrice=sl, quantity=qty,
                                                    type=Client.FUTURE_ORDER_TYPE_STOP_MARKET)
             break
         except Exception as err:
-            print(f'{symbol}: ATTENTION! Cannot place stop loss!')
+            print(f'{symbol}: ATTENTION! Cannot place stop loss! {err}')
     while True:
         try:
             tp_order = client.futures_create_order(symbol=symbol, side=close_side, stopPrice=tp,
@@ -237,13 +239,14 @@ def place_order(symbol: str, price: float, tp: float, sl: float, order_kind: int
                                                    type=Client.FUTURE_ORDER_TYPE_TAKE_PROFIT_MARKET)
             break
         except Exception as err:
-            print(f'{symbol}: ATTENTION! Cannot place take profit!')
+            print(f'{symbol}: ATTENTION! Cannot place take profit! {err}')
     trading_pairs.append(dict(symbol=symbol, orderId=order['orderId'], tpId=tp_order['orderId'],
                               slId=sl_order['orderId']))
     return True
 
 
 def check_orders(pair: dict):
+    global trading_pairs
     tp_order = client.futures_get_order(symbol=pair['symbol'], orderId=pair['tpId'])
     sl_order = client.futures_get_order(symbol=pair['symbol'], orderId=pair['slId'])
 

@@ -46,13 +46,14 @@ def candles(client: Client, symbol: str, interval: str, limit=1000) -> pd.DataFr
         try:
             if not end_time:
                 last_klines = client.futures_klines(symbol=symbol, interval=interval, limit=1000)
-                end_time = int(last_klines[0][0])-1
             else:
-                last_klines = client.futures_klines(symbol=symbol, interval=interval, endTime= end_time, limit=1000)
-                end_time = int(last_klines[0][0]) - 1
+                last_klines = client.futures_klines(symbol=symbol, interval=interval, endTime=end_time, limit=1000)
+
             if len(last_klines) < 1000:
                 limit = len(last_klines)
                 break
+
+            end_time = int(last_klines[0][0]) - 1
             limit -= 1000
             last_klines.extend(klines)
             klines = last_klines.copy()
