@@ -155,12 +155,14 @@ def triple_strategy():
                 trend_pairs.append(res)
 
         print(f'\ntrend pairs: {len(trend_pairs)}')
-        for pair in trend_pairs:
+        for pair in tqdm(trend_pairs, desc="checking for signal"):
             tp, sl = signal(pair)
             if tp:
                 placed = place_order(pair['symbol'], get.price(pair['candles']['close']), tp, sl, pair['trend'])
                 if not placed:
                     print(f'failed to open position for {pair["symbol"]}. tp={tp}, sl={sl}, order kind={pair["trend"]}')
+                    continue
+                print(f'position for {pair["symbol"]} was opened: order kind={pair["trend"]} tp={tp}, sl={sl}')
 
         update_time = get.refresh_time(pairs['BTCUSDT']['close_time'])
         print(f'pairs in trade:\n{trading_pairs}')
