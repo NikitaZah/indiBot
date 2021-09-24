@@ -133,7 +133,7 @@ def triple_strategy():
         candles = get.candles(client, symbol, '15m', limit=1000)
         pairs[symbol] = candles
     while True:
-        start = get.refresh_time(pairs['BTC']['close_time'])
+        start = get.refresh_time(pairs['BTCUSDT']['close_time'])
 
         while int(client.get_server_time()["serverTime"]) < start:
             time.sleep(0.5)
@@ -162,7 +162,7 @@ def triple_strategy():
                 if not placed:
                     print(f'failed to open position for {pair["symbol"]}. tp={tp}, sl={sl}, order kind={pair["trend"]}')
 
-        update_time = get.refresh_time(pairs['BTC']['close_time'])
+        update_time = get.refresh_time(pairs['BTCUSDT']['close_time'])
         print(f'pairs in trade:\n{trading_pairs}')
         while int(client.get_server_time()["serverTime"]) < update_time-10000:
             for pair in tqdm(trading_pairs, desc='checking open positions'):
