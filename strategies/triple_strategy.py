@@ -167,7 +167,8 @@ def triple_strategy():
         update_time = get.refresh_time(pairs['BTCUSDT']['close_time'])
         print(f'pairs in trade:\n{trading_pairs}')
         while int(client.get_server_time()["serverTime"]) < update_time-10000:
-            for pair in tqdm(trading_pairs, desc='checking open positions'):
+            print(f'time left to check pairs: {round((update_time-10000-int(client.get_server_time()["serverTime"]))/1000, 1)}')
+            for pair in trading_pairs:
                 check_orders(pair)
 
 
