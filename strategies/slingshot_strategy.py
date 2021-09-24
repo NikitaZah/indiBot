@@ -107,7 +107,8 @@ def test_slingshot_strategy():
                     if not pair['tp']:
                         test_res /= 2
                     close_date = datetime.fromtimestamp((klines1.loc[end-start-2, 'close_time'])/1000)
-                    stat.append([pair['symbol'], pair['time'], close_date, pair['ok'], pair['res'], test_res, pair['res']+test_res])
+                    ema_slow = ewm(klines1, 62)
+                    stat.append([pair['symbol'], pair['time'], close_date, pair['sl'], ema_slow, pair['ok'], pair['res'], test_res, pair['res']+test_res])
                     print(stat[-1])
                     if test_res + pair['res'] > 0:
                         upstream_flag = True
@@ -134,7 +135,7 @@ def test_slingshot_strategy():
 
     print(f'testing finished.\nTotal deals: {total_win+total_lose}\nTotal win: {total_win}\nTotal lose: {total_lose}\n'
           f'Total result: {total_res}\nMax upstream: {max_up}\nMax downstream: {max_down}')
-    statistics = pd.DataFrame(stat, columns=['symbol', 'open date', 'close date', 'deal_type', 'tp result', 'sl result', 'result'])
+    statistics = pd.DataFrame(stat, columns=['symbol', 'open date', 'close date', 'sl', 'ema', 'deal_type', 'tp result', 'sl result', 'result'])
     print(f'\n{statistics}')
     try:
         statistics.to_pickle(filename)
