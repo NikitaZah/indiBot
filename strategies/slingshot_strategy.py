@@ -2,7 +2,7 @@ from indicators.slingshot import slingshot
 from indicators.stochRSI import stoch_rsi
 import get
 from indicators.lines import ewm
-from data import client_v as client
+from data import client_n as client
 from data import pairs_data, all_pairs
 from tqdm import tqdm
 import pandas as pd
@@ -14,10 +14,11 @@ from binance.helpers import round_step_size
 from binance.client import Client
 
 deposit = 997
-dollars = 250
-leverage = 5
+dollars = 12
+leverage = 1
 
 trading_pairs = list()
+trading_pairs_data = dict()
 order_pairs = list()
 
 STOP_LOSS = 0.04
@@ -76,8 +77,6 @@ def test_slingshot_strategy():
                 continue
 
             pair = apply_status(symbol, klines1, klines4)
-            if not pair:
-                continue
 
             klines1_btc = candles1_btc.loc[(candles1_btc['open_time'] >= open_time) & (candles1_btc['close_time'] <= close_time)].reset_index(drop=True)
             klines4_btc = candles4_btc.loc[(candles4_btc['open_time'] < close_time)]
@@ -87,12 +86,13 @@ def test_slingshot_strategy():
             if not correlation(pair, main_trend):
                 continue
 
-            tp, sl = signal(pair)
+            tp = signal(pair)
             if not tp:
                 continue
 
             length = klines1['close'].size
             price = get.price(klines1['close'].iloc[:length-1])
+            sl = update_sl(pair["symbol"], klines1, main_trend)
             placed = test_place_order(pair['symbol'], price, tp, sl, main_trend, klines1.loc[end-start-2, 'open_time'])
 
             for pair in tqdm(trading_pairs, desc='checking open positions'):
@@ -130,7 +130,7 @@ def test_slingshot_strategy():
                     total_res += test_res + pair['res']
                     trading_pairs.remove(pair)
                 else:
-                    pair['sl'] = update_sl(klines1, main_trend)
+                    pair['sl'] = update_sl(pair['symbol'], klines1, pair['ok'])
 
     print(f'testing finished.\nTotal deals: {total_win+total_lose}\nTotal win: {total_win}\nTotal lose: {total_lose}\n'
           f'Total result: {total_res}\nMax upstream: {max_up}\nMax downstream: {max_down}')
@@ -154,7 +154,7 @@ def test_slingshot_strategy():
 
 
 def slingshot_strategy():
-    global trading_pairs
+    global trading_pairs, trading_pairs_data
     while True:
         start = time.time()
         volatile_pairs = []
@@ -164,7 +164,7 @@ def slingshot_strategy():
         # получаем свечи 1ч и 4ч для всех пар, складываем в соответствующие словари для удобства
         for pair in tqdm(all_pairs, desc='selecting pairs'):
             candles1 = get.candles(client, pair, '1h', limit=1000)
-            candles4 = get.candles(client, pair, '1h', limit=1000)
+            candles4 = get.candles(client, pair, '4h', limit=1000)
             pairs1[pair] = candles1
             pairs4[pair] = candles4
             if get.appropriate(pair, candles4, '4h', volatile=0):
@@ -176,9 +176,9 @@ def slingshot_strategy():
         # возвращает словарь со свечами и трендами (1ч и 4ч), рассчитанными с использованием слингшота
         trend_pairs = []
         for pair in volatile_pairs:
-            res = apply_status(pair[0], pair[1], pair[2])
+            res = apply_status(pair[0], pair[1], pair[2])   # передаем symbol, candles 1h, candles 4h
             if res:
-                trend_pairs.append(res)
+                trend_pairs.append(res)     # res = symbol, candles1h, candles4h, trend1h, trend4h
 
         #  отбираем пары, которые кореллируют с битком и 4ч тф
         for pair in tqdm(trend_pairs, desc='checking pairs for correlation'):
@@ -186,19 +186,33 @@ def slingshot_strategy():
                 trend_pairs.remove(pair)
 
         for pair in tqdm(trend_pairs, desc='checking pairs for signal'):
-            tp, sl = signal(pair)
+            if trading_pairs.count(pair['symbol']) == 1:    # доливаем в текущую позицию не раньше чем через 5ч и только в тот же самый тренд
+                if trading_pairs_data[pair['symbol']]['update'] > int(client.get_server_time()["serverTime"])-18000000\
+                        or trading_pairs_data[pair['symbol']]['order_kind'] != main_trend:
+                    continue
+            tp = signal(pair)
             if tp:
-                placed = place_order(pair['symbol'], get.price(pair['candles1']['close']), tp, sl, main_trend)
+                placed = place_order(pair['symbol'], get.price(pair['candles1']['close']), tp, main_trend)
+
+                if not placed:
+                    print(f'failed to place the order for {pair["symbol"]}')
+                    continue
+                if trading_pairs.count(pair['symbol']) == 1:
+                    trading_pairs_data[placed['symbol']]['tp'].append(placed['tpId'])
+                    trading_pairs_data[placed['symbol']]['update'] = placed['time']
+                else:
+                    trading_pairs.append(placed['symbol'])
+                    trading_pairs_data[placed['symbol']] = dict(order_kind=main_trend, sl=None, tp=[tp],
+                                                                update=placed['time'])
 
         update_time = get.refresh_time(volatile_pairs[0][1]['close_time'])
         while int(client.get_server_time()["serverTime"]) < update_time:
             for pair in trading_pairs:
-                check_orders(pair)
+                check_take_profits(pair)
+                if not check_stop_loss(pair, pairs1[pair]):
+                    trading_pairs.remove(pair)
             if (update_time - int(client.get_server_time()["serverTime"]))/1000 > 300:
                 time.sleep(300)
-            else:
-                time.sleep((update_time - int(client.get_server_time()["serverTime"]))/1000 - 1)
-        print(f'time: {round(time.time()-start, 1)}sec')
 
 
 def get_main_trend(pair: str, pair_data1: pd.DataFrame, pair_data4: pd.DataFrame):
@@ -212,6 +226,7 @@ def get_main_trend(pair: str, pair_data1: pd.DataFrame, pair_data4: pd.DataFrame
 
 def apply_status(pair: str, pair_data1: pd.DataFrame, pair_data4: pd.DataFrame):
     res = dict()
+    print(pair)
     pair_trend1 = slingshot(pair_data1['close'])
     pair_trend4 = slingshot(pair_data4['close'])
     res['symbol'] = pair
@@ -228,6 +243,7 @@ def correlation(pair: dict, trend: int):
         length2 = pair['trend4'].size
         if pair['trend1'].iloc[length-1] * pair['trend4'].iloc[length2-1] > 0:
             if pair['trend1'].iloc[length-1] * trend > 0:
+                print(f'\npair {pair["symbol"]} is correlated\n')
                 return True
         return False
     except Exception as err:
@@ -237,35 +253,30 @@ def correlation(pair: dict, trend: int):
 
 
 def signal(pair: dict):
-    tp, sl = None, None
+    tp = None
     ema_fast = ewm(pair['candles1']['close'], 38)
-    ema_slow = ewm(pair['candles1']['close'], 62)
     k_line, d_line = stoch_rsi(pair['candles1'], 14)
     if pair['trend1'][pair['trend1'].size-1] > 0:
         if k_line[k_line.size-1] < 20 and d_line[d_line.size-1] < 20:
             length = pair['candles1']['low'].size
             if pair['candles1']['close'][length-2] > ema_fast[ema_fast.size-2] > pair['candles1']['low'][length-2]:
-                sl = ema_slow.iloc[ema_slow.size-1] - STOP_LOSS * ema_slow.iloc[ema_slow.size-1]
                 tp = pair['candles1'].loc[length-2, 'close'] + TAKE_PROFIT * pair['candles1'].loc[length-2, 'close']
     else:
-        if k_line[k_line.size-1] > 20 and d_line[d_line.size-1] > 20:
+        if k_line[k_line.size-1] > 80 and d_line[d_line.size-1] > 80:
             length = pair['candles1']['high'].size
             if pair['candles1']['close'][length-2] < ema_fast[ema_fast.size-2] < pair['candles1']['high'][length-2]:
-                sl = ema_slow.iloc[ema_slow.size-1] + STOP_LOSS * ema_slow.iloc[ema_slow.size-1]
                 tp = pair['candles1'].loc[length-2, 'close'] - TAKE_PROFIT * pair['candles1'].loc[length-2, 'close']
-    return tp, sl
+    return tp
 
 
-def place_order(symbol: str, price: float, tp: float, sl: float, order_kind: int):
-    global trading_pairs
+def place_order(symbol: str, price: float, tp: float, order_kind: int):
     qty = round_step_size(dollars * leverage / price, float(pairs_data[symbol]['MARKET_LOT_SIZE']))
     tp = round_step_size(tp, float(pairs_data[symbol]['PRICE_FILTER']))
-    sl = round_step_size(sl, float(pairs_data[symbol]['PRICE_FILTER']))
     side = Client.SIDE_BUY if order_kind == 1 else Client.SIDE_SELL
     close_side = Client.SIDE_SELL if order_kind == 1 else Client.SIDE_BUY
 
     order = None
-    for i in range(30):
+    for i in range(10):
         try:
             order = client.futures_create_order(symbol=symbol, side=side,
                                                 type=Client.ORDER_TYPE_MARKET, quantity=qty)
@@ -274,15 +285,7 @@ def place_order(symbol: str, price: float, tp: float, sl: float, order_kind: int
             print(f'cannot place market order. try number: {i+1} Error: {err}\n')
             time.sleep(1)
     if not order:
-        return False
-    while True:
-        try:
-            sl_order = client.futures_create_order(symbol=symbol, side=close_side, stopPrice=sl,
-                                                   closePosition=True,
-                                                   type=Client.FUTURE_ORDER_TYPE_STOP_MARKET)
-            break
-        except Exception as err:
-            print(f'{symbol}: ATTENTION! Cannot place stop loss!')
+        return None
     while True:
         try:
             tp_order = client.futures_create_order(symbol=symbol, side=close_side, stopPrice=tp, quantity=(qty//2),
@@ -290,36 +293,70 @@ def place_order(symbol: str, price: float, tp: float, sl: float, order_kind: int
             break
         except Exception as err:
             print(f'{symbol}: ATTENTION! Cannot place take profit!')
-    trading_pairs.append(dict(symbol=symbol, orderId=order['orderId'], tpId=tp_order['orderId'],
-                              slId=sl_order['orderId']))
+
+    return dict(symbol=symbol, tpId=tp_order['orderId'], time=tp_order['updateTime'])
+
+
+def check_take_profits(symbol: str):
+    global trading_pairs_data
+    tp_orders = trading_pairs_data[symbol]['tp']
+    for order in tp_orders:
+        status = (client.futures_get_order(symbol=symbol, orderId=order))['status']
+        if status == 'FILLED':
+            print(f'got take profit for {symbol}')
+        elif status == 'CANCELED':
+            print(f'take profit order for {symbol} is canceled')
+        elif status == 'NEW':
+            continue
+        else:
+            print(f'unknown status for take profit order: {status}')
+
+
+def check_stop_loss(symbol: str, candles: pd.DataFrame):
+    global trading_pairs_data
+    sl = trading_pairs_data[symbol]['sl']
+    if sl:
+        status = (client.futures_get_order(symbol=symbol, orderId=sl))['status']
+        if status == 'FILLED':
+            print(f'position for {symbol} was closed by stop loss')
+            return False
+        elif status == 'CANCELED':
+            print(f'stop loss order for {symbol} is canceled')
+            return False
+        elif status == 'NEW':
+            cancel = client.futures_cancel_order(symbol=symbol, orderId=sl)
+            print(f'old stop loss for {symbol} was canceled: {cancel}')
+        else:
+            print(f'unknown status for stop loss order:{status}')
+            return False
+
+    sl_price = update_sl(symbol, candles, trading_pairs_data['order_kind'])
+    close_side = Client.SIDE_SELL if trading_pairs_data['order_kind'] == 1 else Client.SIDE_BUY
+
+    while True:
+        try:
+            sl_order = client.futures_create_order(symbol=symbol, side=close_side, stopPrice=sl_price,
+                                                   closePosition=True,
+                                                   type=Client.FUTURE_ORDER_TYPE_STOP_MARKET)
+            print(f'new stop loss was created successfully: {sl_order}')
+            break
+        except Exception as err:
+            print(f'{symbol}: ATTENTION! Cannot place stop loss!Error: {err}')
     return True
 
 
-def check_orders(pair: dict):
-    tp_order = client.futures_get_order(symbol=pair['symbol'], orderId=pair['tpId'])
-    sl_order = client.futures_get_order(symbol=pair['symbol'], orderId=pair['slId'])
-
-    close = False
-    if sl_order['status'] == 'FILLED':
-        if tp_order['status'] == 'FILLED':
-            print(f'{pair["symbol"]}: trade closed successfully. +$$$')
-        elif tp_order['status'] == 'NEW':
-            close = client.futures_cancel_order(symbol=pair['symbol'], orderId=pair['tpId'])
-            print(f'{pair["symbol"]}: trade closed by stop loss. Take profit order was closed: {close}')
-
-    elif sl_order['status'] == 'CANCELED':
-        close = True
-        print(f'{pair["symbol"]}: stop loss order was closed directly')
-    if close:
-        trading_pairs.remove(pair)
-        print(f'{pair["symbol"]} trade eliminated')
+def update_sl(symbol: str, candles: pd.DataFrame, order_kind: int):
+    ema_slow = ewm(candles['close'], 62)
+    sl = ema_slow.iloc[ema_slow.size-1] - ema_slow.iloc[ema_slow.size-1] * STOP_LOSS if order_kind == 1 \
+        else ema_slow.iloc[ema_slow.size-1] + ema_slow.iloc[ema_slow.size-1] * STOP_LOSS
+    sl = round_step_size(sl, float(pairs_data[symbol]['PRICE_FILTER']))
+    return sl
 
 
 def test_place_order(symbol: str, price: float, tp: float, sl: float, order_kind: int, timestamp: str):
     global trading_pairs
     price = round_step_size(price, float(pairs_data[symbol]['PRICE_FILTER']))
     tp = round_step_size(tp, float(pairs_data[symbol]['PRICE_FILTER']))
-    sl = round_step_size(sl, float(pairs_data[symbol]['PRICE_FILTER']))
     trade_time = datetime.fromtimestamp(int(timestamp)/1000)
     trading_pairs.append(dict(symbol=symbol, price=price, tp=tp, sl=sl, ok=order_kind, time=trade_time, res=0))
     return True
@@ -329,11 +366,11 @@ def test_check_sl(symbol: str, price: float, sl: float, order_kind: int, candles
     length = candles['open_time'].size
     result = None
     if order_kind == 1:
-        if (candles['low'] < sl)[length-1]:
+        if candles['low'].iloc[length-1] < sl:
             result = -(price - sl) / price * 100
 
     else:
-        if (candles['high'] > sl)[length-1]:
+        if candles['high'].iloc[length-1] > sl:
             result = -(sl - price) / price * 100
     return result
 
@@ -342,17 +379,10 @@ def test_check_tp(symbol: str, price: float, tp: float, order_kind: int, candles
     length = candles['open_time'].size
     result = None
     if order_kind == 1:
-        if (candles['high'] > tp)[length-1]:
+        if candles['high'].iloc[length-1] > tp:
             result = (tp - price) / price * 100 * 1/2
 
     else:
-        if (candles['low'] < tp)[length-1]:
+        if candles['low'].iloc[length-1] < tp:
             result = (price - tp) / price * 100 * 1/2
     return result
-
-
-def update_sl(candles: pd.DataFrame, order_kind: int):
-    ema_slow = ewm(candles['close'], 62)
-    sl = ema_slow.iloc[ema_slow.size-1] - ema_slow.iloc[ema_slow.size-1] * STOP_LOSS if order_kind == 1 \
-        else ema_slow.iloc[ema_slow.size-1] + ema_slow.iloc[ema_slow.size-1] * STOP_LOSS
-    return sl
