@@ -15,7 +15,7 @@ import time
 import os
 
 deposit = 743.86278555
-dollars = 10
+dollars = 12
 leverage = 1
 trading_pairs = []
 
@@ -127,11 +127,24 @@ def test_triple_strategy():
 
 def triple_strategy():
     global trading_pairs
+    volatile_pairs = []
+    pairs = dict()
+    for symbol in tqdm(all_pairs, desc='getting initial data for symbols'):
+        candles = get.candles(client, symbol, '15m', limit=1000)
+        pairs[symbol] = candles
     while True:
-        start = time.time()
-        volatile_pairs = []
-        for pair in tqdm(all_pairs, desc='selecting pairs'):
-            candles = get.candles(client, pair, '15m', limit=500)
+        start = get.refresh_time(pairs['BTC']['close_time'])
+
+        while int(client.get_server_time()["serverTime"]) < start:
+            time.sleep(0.5)
+
+        for pair in tqdm(all_pairs, desc='updating and selecting pairs'):
+            old_candles = pairs[pair]
+            new_candles = get.candles(client, pair, '15m', limit=2)
+            old_candles = old_candles.iloc[:old_candles['open_time'].size-1]
+            pairs[pair] = old_candles.append(new_candles, ignore_index=True)    # drop last (unfinished) candle ang put 2 new candles instead
+            candles = pairs[pair]
+
             if get.appropriate(pair, candles, '15m', volatile=0):
                 volatile_pairs.append([pair, candles])
 
@@ -149,11 +162,11 @@ def triple_strategy():
                 if not placed:
                     print(f'failed to open position for {pair["symbol"]}. tp={tp}, sl={sl}, order kind={pair["trend"]}')
 
-        update_time = get.refresh_time(volatile_pairs[0][1]['close_time'])
-        while int(client.get_server_time()["serverTime"]) < update_time:
-            for pair in trading_pairs:
+        update_time = get.refresh_time(pairs['BTC']['close_time'])
+        print(f'pairs in trade:\n{trading_pairs}')
+        while int(client.get_server_time()["serverTime"]) < update_time-10000:
+            for pair in tqdm(trading_pairs, desc='checking open positions'):
                 check_orders(pair)
-        print(f'time: {round(time.time()-start, 1)}')
 
 
 def apply_status(pair: str, pair_data: pd.DataFrame):
