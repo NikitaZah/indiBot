@@ -39,9 +39,8 @@ def cash_volume(volumes: pd.DataFrame, length: int, qty: int):
     return volume
 
 
-def candles(client: Client, symbol: str, interval: str, limit=1000) -> pd.DataFrame:
+def candles(client: Client, symbol: str, interval: str, end_time=None, limit=1000) -> pd.DataFrame:
     klines = []
-    end_time = None
     while limit > 1000:
         try:
             if not end_time:
@@ -58,15 +57,15 @@ def candles(client: Client, symbol: str, interval: str, limit=1000) -> pd.DataFr
             last_klines.extend(klines)
             klines = last_klines.copy()
         except BinanceAPIException as error:
-            print(f'{error}')
+            print(f'API exception:{error}\nsymbol = {symbol}\nlimit = {limit}')
             return None
         except BinanceRequestException as error:
-            print(f'{error}')
+            print(f'request exception:{error}\nsymbol = {symbol}\nlimit = {limit}')
             return None
         except Exception as unknown_error:
             print(f'unknown error: {unknown_error}')
             return None
-
+    limit = max(limit, 10)
     try:
         if not end_time:
             last_klines = client.futures_klines(symbol=symbol, interval=interval, limit=limit)
@@ -75,10 +74,10 @@ def candles(client: Client, symbol: str, interval: str, limit=1000) -> pd.DataFr
         last_klines.extend(klines)
         klines = last_klines.copy()
     except BinanceAPIException as error:
-        print(f'{error}')
+        print(f'API exception:{error}\nsymbol = {symbol}\nlimit = {limit}')
         return None
     except BinanceRequestException as error:
-        print(f'{error}')
+        print(f'request exception:{error}\nsymbol = {symbol}\nlimit = {limit}')
         return None
     except Exception as unknown_error:
         print(f'unknown error: {unknown_error}')

@@ -13,3 +13,22 @@ api_secret_n = config.get('BINANCE', 'API_SECRET_N')
 
 client_v = Client(api_key_v, api_secret_v)
 client_n = Client(api_key_n, api_secret_n)
+
+
+class Pair:
+    def __init__(self, symbol, candles_5m=None, candles_15m=None, candles_1h=None, candles_4h=None, trend_5m=None,
+                 trend_15m=None, trend_1h=None, trend_4h=None, in_trade=False, trade_data=dict()):
+        self.symbol = symbol
+        self.price_filter = float(pairs_data[symbol]['PRICE_FILTER'])
+        self.lot_size = float(pairs_data[symbol]['LOT_SIZE'])
+        self.market_lot_size = float(pairs_data[symbol]['MARKET_LOT_SIZE'])
+        self.candles_5m = candles_5m
+        self.candles_15m = candles_15m
+        self.candles_1h = candles_1h
+        self.candles_4h = candles_4h
+        self.trend_5m = trend_5m
+        self.trend_15m = trend_15m
+        self.trend_1h = trend_1h
+        self.trend_4h = trend_4h
+        self.in_trade = in_trade
+        self.trade_data = trade_data
