@@ -241,7 +241,7 @@ def slingshot_strategy(restore: bool):
         if datetime.fromtimestamp(update_time/1000).hour == 0:
             save_statistics()
 
-        while True:
+        while int(client.get_server_time()["serverTime"]) < update_time:
             counter = 0
             for pair in pairs:
                 pair.candles_1h = get.candles(client, pair.symbol, '1h', 1000)
