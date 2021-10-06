@@ -15,7 +15,6 @@ from datetime import datetime, timedelta
 from binance.enums import *
 from binance.helpers import round_step_size
 from binance.client import Client
-from multiprocessing import Process, Queue
 
 deposit = 700
 dollars = 10    # percent of deposit
@@ -24,174 +23,171 @@ leverage = 20
 statistics = pd.DataFrame(columns=['symbol', 'open date', 'close date', 'deal_type', 'addons', 'fixes',
                                              'stop loss', 'result'])
 
-
-def test_slingshot_strategy():
-    global trading_pairs
-    stat = []
-    filename = './statistics/stat1.pkl'
-
-    testing = 10000
-    pairs = dict()
-
-    total_win = 0
-    total_lose = 0
-    total_res = 0
-
-
-    test_pairs = ['ETHUSDT', 'TLMUSDT', 'BTCUSDT']
-    # all_pairs = test_pairs
-
-    for symbol in tqdm(all_pairs, desc='getting pairs data'):
-        pair_data_file1 = './pair_data/' + symbol + '1h.pkl'
-        pair_data_file4 = './pair_data/' + symbol + '4h.pkl'
-        candles1 = pd.read_pickle(pair_data_file1)
-        candles4 = pd.read_pickle(pair_data_file4)
-        # end_time1 = candles1['open_time'].iloc[0]
-        # end_time4 = candles4['open_time'].iloc[0]
-        # candles1 = get.candles(client, symbol, '1h', end_time1, limit=testing).append(candles1).reset_index(drop=True)
-        # candles4 = get.candles(client, symbol, '4h', end_time4, limit=(testing // 4 + 1)).append(candles4).reset_index(drop=True)
-        # candles1.to_pickle(pair_data_file1)
-        # candles4.to_pickle(pair_data_file4)
-        pairs[symbol] = [candles1, candles4]
-        if candles1['open_time'].size < 20000:
-            print(f'pair {symbol} only has {candles1["open_time"].size} candles')
-
-    for symbol in tqdm(all_pairs, desc='checking symbols'):
-        if symbol == 'BTCUSDT':
-            continue
-
-        in_trade = {}
-        trading_pairs.clear()
-        candles1 = pairs[symbol][0]
-        candles4 = pairs[symbol][1]
-        candles1_btc = pairs['BTCUSDT'][0]
-        candles4_btc = pairs['BTCUSDT'][1]
-
-        length = candles1['open_time'].size
-        start = -1
-        for end in range(1000, length):
-            start += 1
-            klines1 = candles1.iloc[start:end].reset_index(drop=True)
-            start_time = klines1.loc[0, 'open_time']
-            close_time = klines1.loc[end-start-1, 'close_time']
-            klines4 = candles4.loc[candles4['open_time'] < close_time]
-            klines1_btc = candles1_btc.loc[(candles1_btc['open_time'] >= start_time) & (candles1_btc['close_time'] <= close_time)].reset_index(drop=True)
-            klines4_btc = candles4_btc.loc[(candles4_btc['open_time'] < close_time)]
-
-            price = (klines1.loc[end - start - 1, 'open'])
-            c_time = datetime.fromtimestamp(int(klines1.loc[end - start - 1, 'open_time']) / 1000)
-            if in_trade:
-                fixed = check_position(in_trade['symbol'], in_trade['origQty'], in_trade['ok'], klines1)
-                check = check_stop_loss(in_trade, klines1)
-                if check:
-                    in_trade = fix_profit(in_trade, in_trade['origQty'], in_trade['stop_loss'], c_time)
-                elif fixed > 0:
-                    in_trade = fix_profit(in_trade, fixed, price, c_time)
-                else:
-                    if price > 1.16 * in_trade['last_fix_price'] and in_trade['ok'] == 1:
-                        in_trade = fix_profit(in_trade, in_trade['origQty']/6, price, c_time)
-                    if price < 0.84 * in_trade['last_fix_price'] and in_trade['ok'] == -1:
-                        in_trade = fix_profit(in_trade, in_trade['origQty']/6, price, c_time)
-
-                if in_trade['qty'] <= float(pairs_data[symbol]['MARKET_LOT_SIZE']):
-                    stat.append([in_trade['symbol'], in_trade['start_date'], in_trade['last_fix'], in_trade['ok'],
-                                 in_trade['addon_times'], in_trade['fixed_times'], check, in_trade['result']])
-                    print(stat[-1])
-                    if in_trade['result'] > 0:
-                        total_win += 1
-                    else:
-                        total_lose += 1
-                    total_res += in_trade['result']
-                    in_trade = {}
-
-            # # date filter
-            # if c_time.month == 9:
-            #     continue
-            # if c_time.day > 20 and c_time.month != 12:
-            #     continue
-            # if c_time.day < 3 and c_time.month != 1:
-            #     continue
-
-            # volume filter
-            if not get.appropriate(symbol, klines1, '1h', volatile=0):
-                continue
-
-            pair = apply_status(symbol, klines1, klines4)
-
-            main_trend = get_main_trend('BTCUSDT', klines1_btc, klines4_btc)
-
-            # btc correlation filter
-            if not correlation(pair, main_trend):
-                continue
-
-            if not signal(pair):
-                continue
-
-            if in_trade:
-                if in_trade['fixed_times'] == 0:
-                    continue
-                if in_trade['last_fix'] < in_trade['last_add']:
-                    continue
-                if 1.04*in_trade['last_add_price'] > price and in_trade['ok'] == 1:
-                    continue
-                if 0.96*in_trade['last_add_price'] < price and in_trade['ok'] == -1:
-                    continue
-
-                # res = check_addon_condition(in_trade['ok'], klines1)
-                # if not res:
-                #     continue
-
-            placed = test_place_order(pair['symbol'], price, main_trend, klines1.loc[end-start-1, 'open_time'])
-            if in_trade:
-                in_trade['stop_loss'] = (in_trade['last_add_price'] * in_trade['qty'] + price * placed['qty']) / \
-                                        (in_trade['qty'] + placed['qty'])
-                in_trade['qty'] += placed['qty']
-                in_trade['origQty'] = in_trade['qty']
-                in_trade['addon_times'] += 1
-                in_trade['last_add'] = c_time
-                in_trade['last_add_price'] = price
-                in_trade['result'] -= in_trade['ok']*placed['qty'] * price
-            else:
-                in_trade['symbol'] = symbol
-                in_trade['start_date'] = placed['time']
-                in_trade['qty'] = placed['qty']
-                in_trade['origQty'] = placed['qty']
-                in_trade['addon_times'] = 1
-                in_trade['ok'] = main_trend
-                in_trade['last_fix'] = pd.NA
-                in_trade['last_fix_price'] = price
-                in_trade['last_add'] = c_time
-                in_trade['last_add_price'] = price
-                in_trade['fixed_times'] = 0
-                in_trade['stop_loss'] = price - in_trade['ok']*0.08*price
-                in_trade['result'] = -in_trade['ok'] * placed['qty'] * price
-           # print(f'res = {in_trade["result"]}\nqty={in_trade["qty"]}\norig_qty={in_trade["origQty"]}\n')
-
-        if in_trade:
-            stat.append([in_trade['symbol'], in_trade['start_date'], in_trade['last_fix'], in_trade['ok'],
-                         in_trade['addon_times'], in_trade['fixed_times'], False, in_trade['result']])
-            print(stat[-1])
-
-    print(f'testing finished.\nTotal deals: {total_win+total_lose}\nTotal win: {total_win}\nTotal lose: {total_lose}\n'
-          f'Total result: {total_res}\n')
-    statistics = pd.DataFrame(stat, columns=['symbol', 'open date', 'close date', 'deal_type', 'addons', 'fixes',
-                                             'stop loss', 'result'])
-    print(f'\n{statistics}')
-    try:
-        statistics.to_pickle(filename)
-    except FileNotFoundError:
-        print(f'Cannot find directory {filename} to save the database. Trying to create...')
-        folder = '/statistics'
-        curr_path = os.getcwd()
-        full_dir_name = curr_path + folder
-        try:
-            os.mkdir(full_dir_name)
-            statistics.to_pickle(filename)
-            print('Directory created successfully')
-        except OSError as err:
-            print(f'Creation of the directory failed because of {err}\n')
-
-    print(f'full statistics will be available at {filename}')
+# def test_slingshot_strategy():
+#     stat = []
+#     filename = './statistics/stat1.pkl'
+#
+#     testing = 10000
+#     pairs = dict()
+#
+#     total_win = 0
+#     total_lose = 0
+#     total_res = 0
+#
+#
+#     test_pairs = ['ETHUSDT', 'TLMUSDT', 'BTCUSDT']
+#     # all_pairs = test_pairs
+#
+#     for symbol in tqdm(all_pairs, desc='getting pairs data'):
+#         pair_data_file1 = './pair_data/' + symbol + '1h.pkl'
+#         pair_data_file4 = './pair_data/' + symbol + '4h.pkl'
+#         candles1 = pd.read_pickle(pair_data_file1)
+#         candles4 = pd.read_pickle(pair_data_file4)
+#         # end_time1 = candles1['open_time'].iloc[0]
+#         # end_time4 = candles4['open_time'].iloc[0]
+#         # candles1 = get.candles(client, symbol, '1h', end_time1, limit=testing).append(candles1).reset_index(drop=True)
+#         # candles4 = get.candles(client, symbol, '4h', end_time4, limit=(testing // 4 + 1)).append(candles4).reset_index(drop=True)
+#         # candles1.to_pickle(pair_data_file1)
+#         # candles4.to_pickle(pair_data_file4)
+#         pairs[symbol] = [candles1, candles4]
+#         if candles1['open_time'].size < 20000:
+#             print(f'pair {symbol} only has {candles1["open_time"].size} candles')
+#
+#     for symbol in tqdm(all_pairs, desc='checking symbols'):
+#         if symbol == 'BTCUSDT':
+#             continue
+#
+#         in_trade = {}
+#         candles1 = pairs[symbol][0]
+#         candles4 = pairs[symbol][1]
+#         candles1_btc = pairs['BTCUSDT'][0]
+#         candles4_btc = pairs['BTCUSDT'][1]
+#
+#         length = candles1['open_time'].size
+#         start = -1
+#         for end in range(1000, length):
+#             start += 1
+#             klines1 = candles1.iloc[start:end].reset_index(drop=True)
+#             start_time = klines1.loc[0, 'open_time']
+#             close_time = klines1.loc[end-start-1, 'close_time']
+#             klines4 = candles4.loc[candles4['open_time'] < close_time]
+#             klines1_btc = candles1_btc.loc[(candles1_btc['open_time'] >= start_time) & (candles1_btc['close_time'] <= close_time)].reset_index(drop=True)
+#             klines4_btc = candles4_btc.loc[(candles4_btc['open_time'] < close_time)]
+#
+#             price = (klines1.loc[end - start - 1, 'open'])
+#             c_time = datetime.fromtimestamp(int(klines1.loc[end - start - 1, 'open_time']) / 1000)
+#             if in_trade:
+#                 fixed = check_position(in_trade['symbol'], in_trade['origQty'], in_trade['ok'], klines1)
+#                 check = check_stop_loss(in_trade, klines1)
+#                 if check:
+#                     in_trade = fix_profit(in_trade, in_trade['origQty'], in_trade['stop_loss'], c_time)
+#                 elif fixed > 0:
+#                     in_trade = fix_profit(in_trade, fixed, price, c_time)
+#                 else:
+#                     if price > 1.16 * in_trade['last_fix_price'] and in_trade['ok'] == 1:
+#                         in_trade = fix_profit(in_trade, in_trade['origQty']/6, price, c_time)
+#                     if price < 0.84 * in_trade['last_fix_price'] and in_trade['ok'] == -1:
+#                         in_trade = fix_profit(in_trade, in_trade['origQty']/6, price, c_time)
+#
+#                 if in_trade['qty'] <= float(pairs_data[symbol]['MARKET_LOT_SIZE']):
+#                     stat.append([in_trade['symbol'], in_trade['start_date'], in_trade['last_fix'], in_trade['ok'],
+#                                  in_trade['addon_times'], in_trade['fixed_times'], check, in_trade['result']])
+#                     print(stat[-1])
+#                     if in_trade['result'] > 0:
+#                         total_win += 1
+#                     else:
+#                         total_lose += 1
+#                     total_res += in_trade['result']
+#                     in_trade = {}
+#
+#             # # date filter
+#             # if c_time.month == 9:
+#             #     continue
+#             # if c_time.day > 20 and c_time.month != 12:
+#             #     continue
+#             # if c_time.day < 3 and c_time.month != 1:
+#             #     continue
+#
+#             # volume filter
+#             if not get.appropriate(symbol, klines1, '1h', volatile=0):
+#                 continue
+#
+#             pair = apply_status(symbol, klines1, klines4)
+#
+#             main_trend = get_main_trend('BTCUSDT', klines1_btc, klines4_btc)
+#
+#             # btc correlation filter
+#             if not correlation(pair, main_trend):
+#                 continue
+#
+#             if not signal(pair):
+#                 continue
+#
+#             if in_trade:
+#                 if in_trade['fixed_times'] == 0:
+#                     continue
+#                 if in_trade['last_fix'] < in_trade['last_add']:
+#                     continue
+#                 if 1.04*in_trade['last_add_price'] > price and in_trade['ok'] == 1:
+#                     continue
+#                 if 0.96*in_trade['last_add_price'] < price and in_trade['ok'] == -1:
+#                     continue
+#
+#                 # res = check_addon_condition(in_trade['ok'], klines1)
+#                 # if not res:
+#                 #     continue
+#
+#             placed = test_place_order(pair['symbol'], price, main_trend, klines1.loc[end-start-1, 'open_time'])
+#             if in_trade:
+#                 in_trade['stop_loss'] = (in_trade['last_add_price'] * in_trade['qty'] + price * placed['qty']) / \
+#                                         (in_trade['qty'] + placed['qty'])
+#                 in_trade['qty'] += placed['qty']
+#                 in_trade['origQty'] = in_trade['qty']
+#                 in_trade['addon_times'] += 1
+#                 in_trade['last_add'] = c_time
+#                 in_trade['last_add_price'] = price
+#                 in_trade['result'] -= in_trade['ok']*placed['qty'] * price
+#             else:
+#                 in_trade['symbol'] = symbol
+#                 in_trade['start_date'] = placed['time']
+#                 in_trade['qty'] = placed['qty']
+#                 in_trade['origQty'] = placed['qty']
+#                 in_trade['addon_times'] = 1
+#                 in_trade['ok'] = main_trend
+#                 in_trade['last_fix'] = pd.NA
+#                 in_trade['last_fix_price'] = price
+#                 in_trade['last_add'] = c_time
+#                 in_trade['last_add_price'] = price
+#                 in_trade['fixed_times'] = 0
+#                 in_trade['stop_loss'] = price - in_trade['ok']*0.08*price
+#                 in_trade['result'] = -in_trade['ok'] * placed['qty'] * price
+#            # print(f'res = {in_trade["result"]}\nqty={in_trade["qty"]}\norig_qty={in_trade["origQty"]}\n')
+#
+#         if in_trade:
+#             stat.append([in_trade['symbol'], in_trade['start_date'], in_trade['last_fix'], in_trade['ok'],
+#                          in_trade['addon_times'], in_trade['fixed_times'], False, in_trade['result']])
+#             print(stat[-1])
+#
+#     print(f'testing finished.\nTotal deals: {total_win+total_lose}\nTotal win: {total_win}\nTotal lose: {total_lose}\n'
+#           f'Total result: {total_res}\n')
+#     statistics = pd.DataFrame(stat, columns=['symbol', 'open date', 'close date', 'deal_type', 'addons', 'fixes',
+#                                              'stop loss', 'result'])
+#     print(f'\n{statistics}')
+#     try:
+#         statistics.to_pickle(filename)
+#     except FileNotFoundError:
+#         print(f'Cannot find directory {filename} to save the database. Trying to create...')
+#         folder = '/statistics'
+#         curr_path = os.getcwd()
+#         full_dir_name = curr_path + folder
+#         try:
+#             os.mkdir(full_dir_name)
+#             statistics.to_pickle(filename)
+#             print('Directory created successfully')
+#         except OSError as err:
+#             print(f'Creation of the directory failed because of {err}\n')
+#
+#     print(f'full statistics will be available at {filename}')
 
 
 def slingshot_strategy(restore: bool):
@@ -202,6 +198,8 @@ def slingshot_strategy(restore: bool):
         for pair in tqdm(all_pairs, desc='getting candles'):
             candles1 = get.candles(client, pair, '1h', limit=1000)
             candles4 = get.candles(client, pair, '4h', limit=1000)
+            if candles4.empty or candles1.empty:
+                continue
             pairs.append(Pair(pair, candles_1h=candles1, candles_4h=candles4))
 
             # applying main trend
@@ -244,7 +242,9 @@ def slingshot_strategy(restore: bool):
         while int(client.get_server_time()["serverTime"]) < update_time:
             counter = 0
             for pair in pairs:
-                pair.candles_1h = get.candles(client, pair.symbol, '1h', 1000)
+                candles_1h = get.candles(client, pair.symbol, '1h', 1000)
+                if not candles_1h.empty:
+                    pair.candles_1h = candles_1h
                 if pair.in_trade:
                     counter += 1
                     pair = check_stop_loss(pair)
@@ -402,11 +402,11 @@ def check_stop_loss(pair: Pair):
 
 
 def check_position(pair: Pair):
-    length = pair.candles_1h['close'].size
-    k_line, d_line = stoch_rsi(pair.candles_1h.iloc[:length - 1], 14)
+    k_line, d_line = stoch_rsi(pair.candles_1h, 14)
     current_trend = slingshot(pair.candles_1h['close'])
     trend_length = current_trend.size
-    c_time = datetime.fromtimestamp(int(pair.candles_1h['open_time'].iloc[length-1])/1000)
+    length = pair.candles_1h['open_time'].size
+    c_time = datetime.fromtimestamp(int(pair.candles_1h.loc[length-1, 'open_time'])/1000)
     if current_trend.iloc[trend_length - 1] * pair.trade_data['ok'] < 0:
         if pair.trade_data['ok'] == -1:
             if d_line[d_line.size - 1] < k_line[k_line.size - 1]:

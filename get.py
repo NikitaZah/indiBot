@@ -58,13 +58,13 @@ def candles(client: Client, symbol: str, interval: str, end_time=None, limit=100
             klines = last_klines.copy()
         except BinanceAPIException as error:
             print(f'API exception:{error}\nsymbol = {symbol}\nlimit = {limit}')
-            return None
+            return pd.DataFrame()
         except BinanceRequestException as error:
             print(f'request exception:{error}\nsymbol = {symbol}\nlimit = {limit}')
-            return None
+            return pd.DataFrame()
         except Exception as unknown_error:
             print(f'unknown error: {unknown_error}')
-            return None
+            return pd.DataFrame()
     limit = max(limit, 10)
     try:
         if not end_time:
@@ -75,13 +75,13 @@ def candles(client: Client, symbol: str, interval: str, end_time=None, limit=100
         klines = last_klines.copy()
     except BinanceAPIException as error:
         print(f'API exception:{error}\nsymbol = {symbol}\nlimit = {limit}')
-        return None
+        return pd.DataFrame()
     except BinanceRequestException as error:
         print(f'request exception:{error}\nsymbol = {symbol}\nlimit = {limit}')
-        return None
+        return pd.DataFrame()
     except Exception as unknown_error:
         print(f'unknown error: {unknown_error}')
-        return None
+        return pd.DataFrame()
 
     open_time, close_time, high_price, low_price, open_price, close_price, volume, cash_volume, trades_number =\
         [], [], [], [], [], [], [], [], []
