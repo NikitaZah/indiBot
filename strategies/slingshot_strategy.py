@@ -376,7 +376,7 @@ def place_order(pair: Pair, order_kind: int):
         trade_data['last_add'] = datetime.fromtimestamp(int(order['updateTime']) / 1000)
         trade_data['last_add_price'] = float(order['avgPrice'])
         trade_data['fixed_times'] = 0
-        trade_data['result'] = -order_kind * pair.trade_data['origQty'] * pair.trade_data['last_add_price']
+        trade_data['result'] = -order_kind * trade_data['origQty'] * trade_data['last_add_price']
     else:
         trade_data['qty'] += float(order['executedQty'])
         trade_data['origQty'] = trade_data['qty']
@@ -574,7 +574,7 @@ def save_trading_data(pairs):
     ind = []
     for pair in pairs:
         if pair.in_trade:
-            data = pair.trade_data
+            data = pair.extract_data()
             res.append([data['start_date'], data['qty'], data['origQty'], data['addon_times'], data['ok'],
                         data['last_fix'], data['last_fix_price'], data['last_add'], data['last_add_price'],
                         data['fixed_times'], data['stop_loss'], data['slId'], data['result']])
