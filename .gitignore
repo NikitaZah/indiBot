@@ -3,3 +3,5 @@
 /pyvenv.cfg
 /venv
 /db.pkl
+__pycache__/
+*.py[cod]
