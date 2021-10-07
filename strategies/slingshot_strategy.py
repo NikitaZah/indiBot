@@ -383,7 +383,7 @@ def place_order(pair: Pair, order_kind: int):
         trade_data['addon_times'] += 1
         trade_data['last_add'] = datetime.fromtimestamp(int(order['updateTime']) / 1000)
         trade_data['last_add_price'] = float(order['avgPrice'])
-        trade_data['result'] -= order_kind * pair.trade_data['origQty'] * pair.trade_data['last_add_price']
+        trade_data['result'] -= order_kind * trade_data['origQty'] * trade_data['last_add_price']
 
     for i in range(10):
         try:
