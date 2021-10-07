@@ -251,8 +251,6 @@ def slingshot_strategy(restore: bool):
                 save_trading_data(pairs)
 
         update_time = pairs[0].candles_1h.loc[999, 'close_time']
-        open_time = pairs[0].candles_1h.loc[999, 'open_time']
-        print(f'update time: {update_time}\nopen time: {open_time}')
 
         # update statistics at midnight
         if datetime.fromtimestamp(update_time/1000).hour == 0:
@@ -290,7 +288,6 @@ def slingshot_strategy(restore: bool):
                             print(f'position for {pair.symbol} was completely closed')
 
                 time.sleep(1)
-            print(f'update time: {update_time}\nlast open time: {pairs[0].candles_1h.loc[999, "open_time"]}')
             if pairs[0].candles_1h.loc[999, 'open_time'] > update_time:
                 break
         print(f'pairs in trade: {counter}')
