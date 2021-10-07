@@ -4,7 +4,7 @@ from indicators.slingshot import slingshot
 from indicators.stochRSI import stoch_rsi
 import get
 from indicators.lines import ewm, atr2
-from data import client_v as client
+from data import client_n as client
 from data import pairs_data, all_pairs
 from data import Pair
 from tqdm import tqdm
@@ -358,32 +358,33 @@ def place_order(pair: Pair, order_kind: int):
         try:
             order = client.futures_create_order(symbol=pair.symbol, side=side,
                                                 type=Client.ORDER_TYPE_MARKET, quantity=qty)
-            if not pair.in_trade:
-                trade_data['start_date'] = datetime.fromtimestamp(int(order['updateTime'])/1000)
-                trade_data['qty'] = float(order['executedQty'])
-                trade_data['origQty'] = pair.trade_data['qty']
-                trade_data['addon_times'] = 1
-                trade_data['ok'] = order_kind
-                trade_data['last_fix'] = pd.NA
-                trade_data['last_fix_price'] = float(order['avgPrice'])
-                trade_data['last_add'] = datetime.fromtimestamp(int(order['updateTime'])/1000)
-                trade_data['last_add_price'] = float(order['avgPrice'])
-                trade_data['fixed_times'] = 0
-                trade_data['result'] = -order_kind * pair.trade_data['origQty'] * pair.trade_data['last_add_price']
-            else:
-                trade_data['qty'] += float(order['executedQty'])
-                trade_data['origQty'] = pair.trade_data['qty']
-                trade_data['addon_times'] += 1
-                trade_data['last_add'] = datetime.fromtimestamp(int(order['updateTime']) / 1000)
-                trade_data['last_add_price'] = float(order['avgPrice'])
-                trade_data['result'] -= order_kind * pair.trade_data['origQty'] * pair.trade_data['last_add_price']
-
             break
         except Exception as err:
             print(f'cannot place market order for {pair.symbol}. try number: {i+1} Error: {err}\n')
             time.sleep(1)
     if not order:
         return trade_data
+
+    if not pair.in_trade:
+        trade_data['start_date'] = datetime.fromtimestamp(int(order['updateTime']) / 1000)
+        trade_data['qty'] = float(order['executedQty'])
+        trade_data['origQty'] = trade_data['qty']
+        trade_data['addon_times'] = 1
+        trade_data['ok'] = order_kind
+        trade_data['last_fix'] = pd.NA
+        trade_data['last_fix_price'] = float(order['avgPrice'])
+        trade_data['last_add'] = datetime.fromtimestamp(int(order['updateTime']) / 1000)
+        trade_data['last_add_price'] = float(order['avgPrice'])
+        trade_data['fixed_times'] = 0
+        trade_data['result'] = -order_kind * pair.trade_data['origQty'] * pair.trade_data['last_add_price']
+    else:
+        trade_data['qty'] += float(order['executedQty'])
+        trade_data['origQty'] = trade_data['qty']
+        trade_data['addon_times'] += 1
+        trade_data['last_add'] = datetime.fromtimestamp(int(order['updateTime']) / 1000)
+        trade_data['last_add_price'] = float(order['avgPrice'])
+        trade_data['result'] -= order_kind * pair.trade_data['origQty'] * pair.trade_data['last_add_price']
+
     for i in range(10):
         try:
             sl_order = client.futures_create_order(symbol=pair.symbol, side=close_side, stopPrice=sl_price,
