@@ -338,7 +338,7 @@ def signal(pair: Pair):
 
 
 def place_order(pair: Pair, order_kind: int):
-    trade_data = {}
+    trade_data = pair.extract_data()
     price = pair.candles_1h['close'].iloc[pair.candles_1h['close'].size-1]
     qty = round_step_size(define_qty(price), pair.market_lot_size)
     if qty == 0:
@@ -346,8 +346,7 @@ def place_order(pair: Pair, order_kind: int):
     if not pair.in_trade:
         sl_price = 0.92 * price if order_kind == 1 else 1.08 * price
     else:
-        sl_price = (pair.trade_data['last_add_price'] * pair.trade_data['qty'] + price * qty) / \
-                   (pair.trade_data['qty'] + qty)
+        sl_price = (trade_data['last_add_price'] * trade_data['qty'] + price * qty) / (trade_data['qty'] + qty)
     sl_price = round_step_size(sl_price, pair.price_filter)
     side = Client.SIDE_BUY if order_kind == 1 else Client.SIDE_SELL
     close_side = Client.SIDE_SELL if order_kind == 1 else Client.SIDE_BUY
