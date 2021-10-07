@@ -2,3 +2,4 @@
 /Lib/
 /pyvenv.cfg
 /venv
+/db.pkl

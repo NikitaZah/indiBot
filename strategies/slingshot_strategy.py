@@ -4,7 +4,7 @@ from indicators.slingshot import slingshot
 from indicators.stochRSI import stoch_rsi
 import get
 from indicators.lines import ewm, atr2
-from data import client_n as client
+from data import client_v as client
 from data import pairs_data, all_pairs
 from data import Pair
 from tqdm import tqdm
@@ -17,7 +17,7 @@ from binance.helpers import round_step_size
 from binance.client import Client
 
 deposit = 700
-dollars = 10    # percent of deposit
+dollars = 20    # percent of deposit
 leverage = 20
 
 statistics = pd.DataFrame(columns=['symbol', 'open date', 'close date', 'deal_type', 'addons', 'fixes',
@@ -192,34 +192,50 @@ statistics = pd.DataFrame(columns=['symbol', 'open date', 'close date', 'deal_ty
 
 def slingshot_strategy(restore: bool):
     trading_allowed = True
+    pairs = []
+
+    # get candles for symbols and create objects if pairs empty:
+
+    for pair in tqdm(all_pairs, desc='getting candles'):
+        candles_1h, candles_4h = pd.DataFrame(), pd.DataFrame()
+        while candles_4h.empty:
+            candles_4h = get.candles(client, pair, '4h', limit=1000)
+            if candles_4h.empty:
+                time.sleep(3)
+        while candles_1h.empty:
+            candles_1h = get.candles(client, pair, '1h', limit=1000)
+            if candles_1h.empty:
+                time.sleep(4)
+
+        obj_pair = Pair(pair)
+        obj_pair.put_candles('1h', candles_1h)
+        obj_pair.put_candles('4h', candles_4h)
+        pairs.append(obj_pair)
+
+        if pair == 'BTCUSDT':
+            main_trend = get_main_trend(pairs[-1])
+
+    if restore:
+        pairs = restore_trading_data(pairs)
+
     while True:
-        pairs = []
-        # get candles fro symbols and create objects
-        for pair in tqdm(all_pairs, desc='getting candles'):
-            candles1 = get.candles(client, pair, '1h', limit=1000)
-            candles4 = get.candles(client, pair, '4h', limit=1000)
-            if candles4.empty or candles1.empty:
-                continue
-            pairs.append(Pair(pair, candles_1h=candles1, candles_4h=candles4))
-
-            # applying main trend
-            if pair == 'BTCUSDT':
-                main_trend = get_main_trend(pairs[-1])
-
-        if restore:
-            pairs = restore_trading_data(pairs)
-            restore = False
-
+        print('hi')
         if trading_allowed:
             for pair in pairs:
                 if pair == 'BTCUSDT':
                     continue
 
+                if pair.in_trade:
+                    if pair.trade_data['last_add'] > datetime.now() - timedelta(hours=2):
+                        continue
+
                 # checking pair volume and volatility
                 if not get.appropriate(pair.symbol, pair.candles_1h, '1h', volatile=0):
                     continue
 
-                pair = apply_status(pair)
+                trend1, trend4 = get_trends(pair)
+                pair.put_trend('1h', trend1)
+                pair.put_trend('4h', trend4)
 
                 #  skipping pairs not correlated with BTC and 4h timeframe
                 if not correlation(pair, main_trend):
@@ -229,42 +245,60 @@ def slingshot_strategy(restore: bool):
                 if not signal(pair):
                     continue
 
-                pair = place_order(pair, main_trend)
+                trade_data = pair.trade_data | place_order(pair, main_trend)
+                pair.put_data(trade_data)
 
-        save_trading_data(pairs)
+                save_trading_data(pairs)
 
-        update_time = get.refresh_time(pairs[0].candles_1h['close_time'])
+        update_time = pairs[0].candles_1h.loc[999, 'close_time']
+        open_time = pairs[0].candles_1h.loc[999, 'open_time']
+        print(f'update time: {update_time}\nopen time: {open_time}')
 
         # update statistics at midnight
         if datetime.fromtimestamp(update_time/1000).hour == 0:
             save_statistics()
 
-        while int(client.get_server_time()["serverTime"]) < update_time:
+        while True:
             counter = 0
             for pair in pairs:
-                candles_1h = get.candles(client, pair.symbol, '1h', 1000)
+                candles_1h = get.candles(client, pair.symbol, '1h', limit=1000)
                 if not candles_1h.empty:
-                    pair.candles_1h = candles_1h
+                    pair.put_candles('1h', candles_1h)
+                candles_4h = get.candles(client, pair.symbol, '4h', limit=1000)
+                if not candles_4h.empty:
+                    pair.put_candles('4h', candles_4h)
+
+                open_time = datetime.fromtimestamp(pairs[0].candles_1h.loc[999, "open_time"] / 1000)
                 if pair.in_trade:
                     counter += 1
-                    pair = check_stop_loss(pair)
-                    if not pair.in_trade:
+                    trade_data = check_stop_loss(pair)
+                    if not trade_data:
+                        pair.in_trade = False
+                        pair.clear_data()
                         print(f'{pair.symbol} position was closed by stop loss or stop loss was canceled directly')
+                        save_trading_data(pairs)
                         continue
                     qty = check_position(pair)
                     if qty > 0:
-                        pair = fix_profit(pair, qty)
+                        trade_data = fix_profit(pair, qty)
+                        pair.clear_data()
+                        pair.put_data(trade_data)
                         print(f'{pair.symbol}: fixed profit')
-                        if not pair.in_trade:
+                        save_trading_data(pairs)
+                        if not trade_data:
+                            pair.in_trade = False
                             print(f'position for {pair.symbol} was completely closed')
-                if int(client.get_server_time()["serverTime"]) >= update_time:
-                    break
+
                 time.sleep(1)
+            print(f'update time: {update_time}\nlast open time: {pairs[0].candles_1h.loc[999, "open_time"]}')
+            if pairs[0].candles_1h.loc[999, 'open_time'] > update_time:
+                break
         print(f'pairs in trade: {counter}')
 
 
 def get_main_trend(pair: Pair):
-    pair = apply_status(pair)
+    trend1, trend4 = get_trends(pair)
+    pair.put_trend('4h', trend4)
     length = pair.trend_4h.size
     if pair.trend_4h.iloc[length-1] < 0:
         return -1
@@ -272,10 +306,8 @@ def get_main_trend(pair: Pair):
         return 1
 
 
-def apply_status(pair: Pair):
-    pair.trend_1h = slingshot(pair.candles_1h['close'])
-    pair.trend_4h = slingshot(pair.candles_4h['close'])
-    return pair
+def get_trends(pair: Pair):
+    return slingshot(pair.candles_1h['close']), slingshot(pair.candles_4h['close'])
 
 
 def correlation(pair: Pair, trend: int):
@@ -309,12 +341,15 @@ def signal(pair: Pair):
 
 
 def place_order(pair: Pair, order_kind: int):
+    trade_data = {}
     price = pair.candles_1h['close'].iloc[pair.candles_1h['close'].size-1]
-    qty = round_step_size(define_qty(), pair.market_lot_size)
+    qty = round_step_size(define_qty(price), pair.market_lot_size)
+    if qty == 0:
+        return trade_data
     if not pair.in_trade:
         sl_price = 0.92 * price if order_kind == 1 else 1.08 * price
     else:
-        sl_price = (pair.trade_data['last_add_price'] * pair.trade_data['qty'] + price * qty)/\
+        sl_price = (pair.trade_data['last_add_price'] * pair.trade_data['qty'] + price * qty) / \
                    (pair.trade_data['qty'] + qty)
     sl_price = round_step_size(sl_price, pair.price_filter)
     side = Client.SIDE_BUY if order_kind == 1 else Client.SIDE_SELL
@@ -327,63 +362,69 @@ def place_order(pair: Pair, order_kind: int):
             order = client.futures_create_order(symbol=pair.symbol, side=side,
                                                 type=Client.ORDER_TYPE_MARKET, quantity=qty)
             if not pair.in_trade:
-                pair.in_trade = True
-                pair.trade_data['start_date'] = datetime.fromtimestamp(int(order['updateTime'])/1000)
-                pair.trade_data['qty'] = float(order['executedQty'])
-                pair.trade_data['origQty'] = pair.trade_data['qty']
-                pair.trade_data['addon_times'] = 1
-                pair.trade_data['ok'] = order_kind
-                pair.trade_data['last_fix'] = pd.NA
-                pair.trade_data['last_fix_price'] = float(order['avgPrice'])
-                pair.trade_data['last_add'] = datetime.fromtimestamp(int(order['updateTime'])/1000)
-                pair.trade_data['last_add_price'] = float(order['avgPrice'])
-                pair.trade_data['fixed_times'] = 0
-                pair.trade_data['result'] = -order_kind * pair.trade_data['origQty'] * pair.trade_data['last_add_price']
+                trade_data['start_date'] = datetime.fromtimestamp(int(order['updateTime'])/1000)
+                trade_data['qty'] = float(order['executedQty'])
+                trade_data['origQty'] = pair.trade_data['qty']
+                trade_data['addon_times'] = 1
+                trade_data['ok'] = order_kind
+                trade_data['last_fix'] = pd.NA
+                trade_data['last_fix_price'] = float(order['avgPrice'])
+                trade_data['last_add'] = datetime.fromtimestamp(int(order['updateTime'])/1000)
+                trade_data['last_add_price'] = float(order['avgPrice'])
+                trade_data['fixed_times'] = 0
+                trade_data['result'] = -order_kind * pair.trade_data['origQty'] * pair.trade_data['last_add_price']
             else:
-                pair.trade_data['qty'] += float(order['executedQty'])
-                pair.trade_data['origQty'] = pair.trade_data['qty']
-                pair.trade_data['addon_times'] += 1
-                pair.trade_data['last_add'] = datetime.fromtimestamp(int(order['updateTime']) / 1000)
-                pair.trade_data['last_add_price'] = float(order['avgPrice'])
-                pair.trade_data['result'] -= order_kind * pair.trade_data['origQty'] * pair.trade_data['last_add_price']
+                trade_data['qty'] += float(order['executedQty'])
+                trade_data['origQty'] = pair.trade_data['qty']
+                trade_data['addon_times'] += 1
+                trade_data['last_add'] = datetime.fromtimestamp(int(order['updateTime']) / 1000)
+                trade_data['last_add_price'] = float(order['avgPrice'])
+                trade_data['result'] -= order_kind * pair.trade_data['origQty'] * pair.trade_data['last_add_price']
 
             break
         except Exception as err:
             print(f'cannot place market order for {pair.symbol}. try number: {i+1} Error: {err}\n')
             time.sleep(1)
     if not order:
-        return pair
+        return trade_data
     for i in range(10):
         try:
             sl_order = client.futures_create_order(symbol=pair.symbol, side=close_side, stopPrice=sl_price,
                                                    closePosition=True, type=Client.FUTURE_ORDER_TYPE_STOP_MARKET)
-            pair.trade_data['stop_loss'] = sl_price
-            pair.trade_data['slId'] = sl_order['orderId']
+            trade_data['stop_loss'] = sl_price
+            trade_data['slId'] = sl_order['orderId']
             break
         except Exception as err:
-            print(f'{pair.symbol}: ATTENTION! Cannot place take profit!')
+            print(f'{pair.symbol}: ATTENTION! Cannot place stop loss!\n{err}')
 
-    return pair
+    return trade_data
 
 
-def define_qty():
+def define_qty(price: float):
     acc_info = (client.futures_account_balance())[1]
     curr_balance = float(acc_info['balance'])
     available = float(acc_info['withdrawAvailable'])
-    orig_qty = dollars/100 * curr_balance
-    qty = orig_qty
-    if available / (orig_qty/leverage) < 10:
-        qty /= 2
-    if available / (orig_qty/leverage) < 5:
-        qty /= 2
-    if available / (orig_qty / leverage) < 4:
-        qty = 0
+    orig_cash = dollars/100 * curr_balance
+    cash = orig_cash
+    if available / (orig_cash/leverage) < 10:
+        cash /= 2
+    if available / (orig_cash/leverage) < 5:
+        cash /= 2
+    if available / (orig_cash/leverage) < 4:
+        cash = 0
+
+    qty = cash/price
     return qty
 
 
 def check_stop_loss(pair: Pair):
     global statistics
-    sl_order = client.futures_get_order(symbol=pair.symbol, orderId=pair.trade_data['slId'])
+    trade_data = pair.extract_data()
+    try:
+        sl_order = client.futures_get_order(symbol=pair.symbol, orderId=pair.trade_data['slId'])
+    except Exception as err:
+        print(f'Error while getting sl order for {pair.symbol}, order id: {pair.trade_data["slId"]}\n{err}')
+        return trade_data
     if sl_order['status'] == 'FILLED':
         c_time = datetime.fromtimestamp(int(sl_order['updateTime']) / 1000)
         pair.trade_data['result'] += pair.trade_data['ok'] * pair.trade_data['qty'] * sl_order['avgPrice']
@@ -392,13 +433,11 @@ def check_stop_loss(pair: Pair):
                              pair.trade_data['result']]], columns=['symbol', 'open date', 'close date', 'deal_type',
                                                                    'addons', 'fixes', 'stop loss', 'result'])
         statistics.append(res, ignore_index=True)
-        pair.in_trade=False
-        pair.trade_data.clear()
+        trade_data.clear()
     elif sl_order['status'] == 'CANCELED':
         print(f'stop loss order for {pair.symbol} was canceled directly. Tracking of current position has been stopped')
-        pair.in_trade = False
-        pair.trade_data.clear()
-    return pair
+        trade_data.clear()
+    return trade_data
 
 
 def check_position(pair: Pair):
@@ -432,52 +471,52 @@ def check_position(pair: Pair):
 
 def fix_profit(pair: Pair, fixed):
     global statistics
+    trade_data = pair.extract_data()
     # price = pair.candles_1h['close'].iloc[pair.candles_1h['close'].size - 1]
-    close_side = Client.SIDE_SELL if pair.trade_data['ok'] == 1 else Client.SIDE_BUY
+    close_side = Client.SIDE_SELL if trade_data['ok'] == 1 else Client.SIDE_BUY
     fixed = round_step_size(fixed, pair.market_lot_size)
     if fixed == 0:
-        fixed = pair.trade_data['origQty']
-    if fixed == pair.trade_data['origQty']:
+        fixed = trade_data['origQty']
+    if fixed == trade_data['origQty']:
         try:
             close = client.futures_create_order(symbol=pair.symbol, type=Client.FUTURE_ORDER_TYPE_MARKET,
                                                 side=close_side, closePosition=True)
         except Exception as err:
             print(f'cant close position for {pair.symbol}\n{err}')
-            return pair
+            return trade_data
         try:
             cancel = client.futures_cancel_order(symbol=pair.symbol, orderId=pair.trade_data['slId'])
         except Exception as err:
             print(f'cant cancel stop loss order dor {pair.symbol}\n{err}')
         c_time = datetime.fromtimestamp(int(close['updateTime']) / 1000)
         price = float(close['avgPrice'])
-        pair.trade_data['result'] += pair.trade_data['ok'] * pair.trade_data['qty'] * price
-        pair.trade_data['fixed_times'] += 1
-        pair.trade_data['last_fix_price'] = price
-        pair.trade_data['last_fix'] = c_time
-        res = pd.DataFrame([[pair.symbol, pair.trade_data['start_trade'], pair.trade_data['last_fix'],
-                            pair.trade_data['ok'], pair.trade_data['add_times'], pair.trade_data['fixed_times'], False,
-                            pair.trade_data['result']]], columns=['symbol', 'open date', 'close date', 'deal_type',
-                                                                  'addons', 'fixes', 'stop loss', 'result'])
+        trade_data['result'] += trade_data['ok'] * trade_data['qty'] * price
+        trade_data['fixed_times'] += 1
+        trade_data['last_fix_price'] = price
+        trade_data['last_fix'] = c_time
+        res = pd.DataFrame([[pair.symbol, trade_data['start_trade'], trade_data['last_fix'],
+                            trade_data['ok'], trade_data['add_times'], trade_data['fixed_times'], False,
+                            trade_data['result']]], columns=['symbol', 'open date', 'close date', 'deal_type',
+                                                             'addons', 'fixes', 'stop loss', 'result'])
         statistics.append(res, ignore_index=True)
-        pair.in_trade = False
-        pair.trade_data.clear()
+        trade_data.clear()
     else:
         try:
             fix = client.futures_create_order(symbol=pair.symbol, side=close_side,
                                               type=Client.ORDER_TYPE_MARKET, quantity=fixed)
         except Exception as err:
             print(f'cant fix position for {pair.symbol}\n{err}')
-            return pair
+            return trade_data
         c_time = datetime.fromtimestamp(int(fix['updateTime']) / 1000)
         price = float(fix['avgPrice'])
-        pair.trade_data['qty'] -= fixed
-        pair.trade_data['fixed_times'] += 1
-        pair.trade_data['last_fix'] = c_time
-        pair.trade_data['last_fix_price'] = price
-        pair.trade_data['result'] += pair.trade_data['ok'] * fixed * price
-        if price > 1.03*pair.trade_data['last_add_price'] and pair.trade_data['ok'] == 1:
+        trade_data['qty'] -= fixed
+        trade_data['fixed_times'] += 1
+        trade_data['last_fix'] = c_time
+        trade_data['last_fix_price'] = price
+        trade_data['result'] += trade_data['ok'] * fixed * price
+        if price > 1.03*trade_data['last_add_price'] and trade_data['ok'] == 1:
             try:
-                cancel = client.futures_cancel_order(symbol=pair.symbol, orderId=pair.trade_data['slId'])
+                cancel = client.futures_cancel_order(symbol=pair.symbol, orderId=trade_data['slId'])
             except Exception as err:
                 print(f'cant cancel stop loss order dor {pair.symbol}\n{err}')
             sl_price = 0.98*pair.trade_data['last_add_price']
@@ -487,13 +526,13 @@ def fix_profit(pair: Pair, fixed):
                                                        closePosition=True, type=Client.FUTURE_ORDER_TYPE_STOP_MARKET)
             except Exception as err:
                 print(f'cant create stop loss order for {pair.symbol}\n{err}')
-                return pair
-            pair.trade_data['stop_loss'] = sl_price
-            pair.trade_data['slId'] = sl_order['orderId']
+                return trade_data
+            trade_data['stop_loss'] = sl_price
+            trade_data['slId'] = sl_order['orderId']
 
-        elif price < 0.97*pair.trade_data['last_add_price'] and pair.trade_data['ok'] == -1:
+        elif price < 0.97*trade_data['last_add_price'] and trade_data['ok'] == -1:
             try:
-                cancel = client.futures_cancel_order(symbol=pair.symbol, orderId=pair.trade_data['slId'])
+                cancel = client.futures_cancel_order(symbol=pair.symbol, orderId=trade_data['slId'])
             except Exception as err:
                 print(f'cant cancel stop loss order dor {pair.symbol}\n{err}')
             sl_price = 1.02*pair.trade_data['last_add_price']
@@ -503,11 +542,11 @@ def fix_profit(pair: Pair, fixed):
                                                        closePosition=True, type=Client.FUTURE_ORDER_TYPE_STOP_MARKET)
             except Exception as err:
                 print(f'cant create stop loss order for {pair.symbol}\n{err}')
-                return pair
-            pair.trade_data['stop_loss'] = sl_price
-            pair.trade_data['slId'] = sl_order['orderId']
+                return trade_data
+            trade_data['stop_loss'] = sl_price
+            trade_data['slId'] = sl_order['orderId']
 
-    return pair
+    return trade_data
 
 
 def test_place_order(symbol: str, price: float, order_kind: int, timestamp: str):
