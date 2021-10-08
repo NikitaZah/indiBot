@@ -4,7 +4,7 @@ from indicators.slingshot import slingshot
 from indicators.stochRSI import stoch_rsi
 import get
 from indicators.lines import ewm, atr2
-from data import client_v as client
+from data import client_n as client
 from data import pairs_data, all_pairs
 from data import Pair
 from tqdm import tqdm
@@ -190,8 +190,7 @@ statistics = pd.DataFrame(columns=['symbol', 'open date', 'close date', 'deal_ty
 #     print(f'full statistics will be available at {filename}')
 
 
-def slingshot_strategy(restore: bool):
-    trading_allowed = True
+def slingshot_strategy(restore: bool, trading_allowed: bool):
     pairs = []
 
     # get candles for symbols and create objects if pairs empty:
@@ -418,11 +417,11 @@ def define_qty(price: float):
     available = float(acc_info['withdrawAvailable'])
     orig_cash = dollars/100 * curr_balance * leverage
     cash = orig_cash
-    if available / (orig_cash/leverage) < 10:
-        cash /= 2
     if available / (orig_cash/leverage) < 5:
         cash /= 2
     if available / (orig_cash/leverage) < 4:
+        cash /= 2
+    if available / (orig_cash/leverage) < 3:
         cash = 0
 
     qty = cash/price
@@ -461,104 +460,106 @@ def check_position(pair: Pair):
     if current_trend.iloc[trend_length - 1] * pair.trade_data['ok'] < 0:
         if pair.trade_data['ok'] == -1:
             if d_line[d_line.size - 1] < k_line[k_line.size - 1]:
-                return pair.trade_data['origQty']
+                return pair.trade_data['qty']
         else:
             if d_line[d_line.size - 1] > k_line[k_line.size - 1]:
-                return pair.trade_data['origQty']
+                return pair.trade_data['qty']
     else:
         if pair.trade_data['ok'] == -1:
             if d_line[d_line.size - 1] < k_line[k_line.size - 1] < 20:
                 if not pair.trade_data['last_fix']:
-                    return pair.trade_data['qty'] / 6
+                    return pair.trade_data['origQty'] / 6
                 elif pair.trade_data['last_fix'] < c_time - timedelta(hours=3):
-                    return pair.trade_data['qty'] / 6
+                    return pair.trade_data['origQty'] / 6
         else:
             if d_line[d_line.size - 1] > k_line[k_line.size - 1] > 80:
                 if not pair.in_trade:
-                    return pair.trade_data['qty'] / 6
+                    return pair.trade_data['origQty'] / 6
                 elif pair.trade_data['last_fix'] < c_time - timedelta(hours=3):
-                    return pair.trade_data['qty'] / 6
+                    return pair.trade_data['origQty'] / 6
     return 0
 
 
-def fix_profit(pair: Pair, fixed):
+def fix_profit(pair: Pair, qty: float):
     global statistics
     trade_data = pair.extract_data()
     # price = pair.candles_1h['close'].iloc[pair.candles_1h['close'].size - 1]
     close_side = Client.SIDE_SELL if trade_data['ok'] == 1 else Client.SIDE_BUY
-    fixed = round_step_size(fixed, pair.market_lot_size)
-    if fixed == 0:
-        fixed = trade_data['origQty']
-    if fixed == trade_data['origQty']:
-        try:
-            close = client.futures_create_order(symbol=pair.symbol, type=Client.FUTURE_ORDER_TYPE_MARKET,
-                                                side=close_side, closePosition=True)
-        except Exception as err:
-            print(f'cant close position for {pair.symbol}\n{err}')
-            return trade_data
-        try:
-            cancel = client.futures_cancel_order(symbol=pair.symbol, orderId=pair.trade_data['slId'])
-        except Exception as err:
-            print(f'cant cancel stop loss order dor {pair.symbol}\n{err}')
-        c_time = datetime.fromtimestamp(int(close['updateTime']) / 1000)
-        price = float(close['avgPrice'])
-        trade_data['result'] += trade_data['ok'] * trade_data['qty'] * price
-        trade_data['fixed_times'] += 1
-        trade_data['last_fix_price'] = price
-        trade_data['last_fix'] = c_time
+    qty = round_step_size(qty, pair.market_lot_size)
+    if qty == 0:
+        qty = pair.market_lot_size
+
+    try:
+        fixed = client.futures_create_order(symbol=pair.symbol, type=Client.FUTURE_ORDER_TYPE_MARKET,
+                                            side=close_side, quantity=qty)
+    except Exception as err:
+        print(f'cant close position for {pair.symbol}\n{err}')
+        return trade_data
+
+    while fixed['status'] != 'FILLED':
+        fixed = client.futures_get_order(symbol=pair.symbol, orderId=fixed['orderId'])
+
+    executed_qty = fixed["executedQty"]
+    c_time = datetime.fromtimestamp(int(fixed['updateTime']) / 1000)
+    price = float(fixed['avgPrice'])
+
+    trade_data['qty'] -= executed_qty
+    trade_data['result'] += trade_data['ok'] * executed_qty * price
+    trade_data['fixed_times'] += 1
+    trade_data['last_fix_price'] = price
+    trade_data['last_fix'] = c_time
+
+    if trade_data['qty'] == 0:
         res = pd.DataFrame([[pair.symbol, trade_data['start_trade'], trade_data['last_fix'],
                             trade_data['ok'], trade_data['add_times'], trade_data['fixed_times'], False,
                             trade_data['result']]], columns=['symbol', 'open date', 'close date', 'deal_type',
                                                              'addons', 'fixes', 'stop loss', 'result'])
         statistics.append(res, ignore_index=True)
+        cancel_order(pair.symbol, trade_data['slId'])
         trade_data.clear()
+        return trade_data
+
     else:
-        try:
-            fix = client.futures_create_order(symbol=pair.symbol, side=close_side,
-                                              type=Client.ORDER_TYPE_MARKET, quantity=fixed)
-        except Exception as err:
-            print(f'cant fix position for {pair.symbol}\n{err}')
-            return trade_data
-        c_time = datetime.fromtimestamp(int(fix['updateTime']) / 1000)
-        price = float(fix['avgPrice'])
-        trade_data['qty'] -= fixed
-        trade_data['fixed_times'] += 1
-        trade_data['last_fix'] = c_time
-        trade_data['last_fix_price'] = price
-        trade_data['result'] += trade_data['ok'] * fixed * price
         if price > 1.03*trade_data['last_add_price'] and trade_data['ok'] == 1:
-            try:
-                cancel = client.futures_cancel_order(symbol=pair.symbol, orderId=trade_data['slId'])
-            except Exception as err:
-                print(f'cant cancel stop loss order dor {pair.symbol}\n{err}')
+            cancel_order(pair.symbol, trade_data['slId'])
+
             sl_price = 0.98*pair.trade_data['last_add_price']
             sl_price = round_step_size(sl_price, pair.price_filter)
+
             try:
                 sl_order = client.futures_create_order(symbol=pair.symbol, side=close_side, stopPrice=sl_price,
                                                        closePosition=True, type=Client.FUTURE_ORDER_TYPE_STOP_MARKET)
             except Exception as err:
                 print(f'cant create stop loss order for {pair.symbol}\n{err}')
                 return trade_data
+
             trade_data['stop_loss'] = sl_price
             trade_data['slId'] = sl_order['orderId']
 
         elif price < 0.97*trade_data['last_add_price'] and trade_data['ok'] == -1:
-            try:
-                cancel = client.futures_cancel_order(symbol=pair.symbol, orderId=trade_data['slId'])
-            except Exception as err:
-                print(f'cant cancel stop loss order dor {pair.symbol}\n{err}')
+            cancel_order(pair.symbol, trade_data['slId'])
+
             sl_price = 1.02*pair.trade_data['last_add_price']
             sl_price = round_step_size(sl_price, pair.price_filter)
+
             try:
                 sl_order = client.futures_create_order(symbol=pair.symbol, side=close_side, stopPrice=sl_price,
                                                        closePosition=True, type=Client.FUTURE_ORDER_TYPE_STOP_MARKET)
             except Exception as err:
                 print(f'cant create stop loss order for {pair.symbol}\n{err}')
                 return trade_data
+
             trade_data['stop_loss'] = sl_price
             trade_data['slId'] = sl_order['orderId']
 
     return trade_data
+
+
+def cancel_order(symbol: str, order_id):
+    try:
+        cancel = client.futures_cancel_order(symbol=symbol, orderId=order_id)
+    except Exception as error:
+        print(f'failed to cancel order for {symbol}\nerror = {error}')
 
 
 def test_place_order(symbol: str, price: float, order_kind: int, timestamp: str):
