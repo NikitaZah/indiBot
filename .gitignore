@@ -5,3 +5,4 @@
 /db.pkl
 __pycache__/
 *.py[cod]
+/strategies/__pycache__
