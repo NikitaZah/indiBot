@@ -219,7 +219,8 @@ def slingshot_strategy(restore: bool):
         pairs = restore_trading_data(pairs)
 
     while True:
-        print('hi')
+        now = datetime.now()
+        print(f'new cycle started at {now}')
         if trading_allowed:
             for pair in pairs:
                 if pair == 'BTCUSDT':
@@ -247,6 +248,9 @@ def slingshot_strategy(restore: bool):
 
                 trade_data = pair.trade_data | place_order(pair, main_trend)
                 pair.put_data(trade_data)
+                if trade_data:
+                    pair.in_trade = True
+                    print(f'{pair.symbol}:\ntrade data: {trade_data}')
 
                 save_trading_data(pairs)
 
@@ -262,6 +266,10 @@ def slingshot_strategy(restore: bool):
                 candles_1h = get.candles(client, pair.symbol, '1h', limit=1000)
                 if not candles_1h.empty:
                     pair.put_candles('1h', candles_1h)
+
+                # if new hour started and we are checking not the first symbol, we start from the beginning
+                if candles_1h.loc[999, 'open_time'] > update_time and pair.symbol != 'ETHUSDT':
+                    break
                 candles_4h = get.candles(client, pair.symbol, '4h', limit=1000)
                 if not candles_4h.empty:
                     pair.put_candles('4h', candles_4h)
@@ -357,12 +365,19 @@ def place_order(pair: Pair, order_kind: int):
         try:
             order = client.futures_create_order(symbol=pair.symbol, side=side,
                                                 type=Client.ORDER_TYPE_MARKET, quantity=qty)
+            print(f'order status of just created order for {pair.symbol}: {order["status"]}')
             break
         except Exception as err:
             print(f'cannot place market order for {pair.symbol}. try number: {i+1} Error: {err}\n')
             time.sleep(1)
     if not order:
         return trade_data
+
+    while order['status'] != 'FILLED':
+        try:
+            order = client.futures_get_order(symbol=pair.symbol, orderId=order['orderId'])
+        except Exception as err:
+            print(f'cannot get recently created market order\nerror = {err}')
 
     if not pair.in_trade:
         trade_data['start_date'] = datetime.fromtimestamp(int(order['updateTime']) / 1000)
@@ -401,7 +416,7 @@ def define_qty(price: float):
     acc_info = (client.futures_account_balance())[1]
     curr_balance = float(acc_info['balance'])
     available = float(acc_info['withdrawAvailable'])
-    orig_cash = dollars/100 * curr_balance
+    orig_cash = dollars/100 * curr_balance * leverage
     cash = orig_cash
     if available / (orig_cash/leverage) < 10:
         cash /= 2
@@ -420,15 +435,15 @@ def check_stop_loss(pair: Pair):
     try:
         sl_order = client.futures_get_order(symbol=pair.symbol, orderId=pair.trade_data['slId'])
     except Exception as err:
-        print(f'Error while getting sl order for {pair.symbol}, order id: {pair.trade_data["slId"]}\n{err}')
+        print(f'Error while getting sl order for {pair.symbol}, order id: {trade_data["slId"]}\n{err}')
         return trade_data
     if sl_order['status'] == 'FILLED':
         c_time = datetime.fromtimestamp(int(sl_order['updateTime']) / 1000)
-        pair.trade_data['result'] += pair.trade_data['ok'] * pair.trade_data['qty'] * sl_order['avgPrice']
-        res = pd.DataFrame([[pair.symbol, pair.trade_data['start_date'], c_time, pair.trade_data['ok'],
-                             pair.trade_data['add_times'], pair.trade_data['fixed_times'], True,
-                             pair.trade_data['result']]], columns=['symbol', 'open date', 'close date', 'deal_type',
-                                                                   'addons', 'fixes', 'stop loss', 'result'])
+        trade_data['result'] += trade_data['ok'] * trade_data['qty'] * float(sl_order['avgPrice'])
+        res = pd.DataFrame([[pair.symbol, trade_data['start_date'], c_time, trade_data['ok'], trade_data['add_times'],
+                             trade_data['fixed_times'], True, trade_data['result']]],
+                           columns=['symbol', 'open date', 'close date', 'deal_type', 'addons', 'fixes', 'stop loss',
+                                    'result'])
         statistics.append(res, ignore_index=True)
         trade_data.clear()
     elif sl_order['status'] == 'CANCELED':
@@ -598,11 +613,12 @@ def restore_trading_data(pairs):
     for pair in pairs:
         try:
             df1 = df.loc[[pair.symbol]]
-        except KeyError:
+        except KeyError:    # symbol is not in trade
             continue
 
         pair.in_trade = True
-        pair.trade_data = (df1.to_dict('records'))[0]
+        trade_data = (df1.to_dict('records'))[0]
+        pair.put_data(trade_data)
         print(f'trade data for {pair.symbol} was restored')
     return pairs
 
