@@ -4,7 +4,7 @@ from indicators.slingshot import slingshot
 from indicators.stochRSI import stoch_rsi
 import get
 from indicators.lines import ewm, atr2
-from data import client_v as client
+from data import client_n as client
 from data import pairs_data, all_pairs
 from data import Pair
 from tqdm import tqdm
@@ -439,7 +439,7 @@ def check_stop_loss(pair: Pair):
     if sl_order['status'] == 'FILLED':
         c_time = datetime.fromtimestamp(int(sl_order['updateTime']) / 1000)
         trade_data['result'] += trade_data['ok'] * trade_data['qty'] * float(sl_order['avgPrice'])
-        res = pd.DataFrame([[pair.symbol, trade_data['start_date'], c_time, trade_data['ok'], trade_data['add_times'],
+        res = pd.DataFrame([[pair.symbol, trade_data['start_date'], c_time, trade_data['ok'], trade_data['addon_times'],
                              trade_data['fixed_times'], True, trade_data['result']]],
                            columns=['symbol', 'open date', 'close date', 'deal_type', 'addons', 'fixes', 'stop loss',
                                     'result'])
@@ -511,7 +511,7 @@ def fix_profit(pair: Pair, qty: float):
 
     if trade_data['qty'] == 0:
         res = pd.DataFrame([[pair.symbol, trade_data['start_trade'], trade_data['last_fix'],
-                            trade_data['ok'], trade_data['add_times'], trade_data['fixed_times'], False,
+                            trade_data['ok'], trade_data['addon_times'], trade_data['fixed_times'], False,
                             trade_data['result']]], columns=['symbol', 'open date', 'close date', 'deal_type',
                                                              'addons', 'fixes', 'stop loss', 'result'])
         statistics.append(res, ignore_index=True)
