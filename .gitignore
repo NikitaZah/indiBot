@@ -3,6 +3,6 @@
 /pyvenv.cfg
 /venv
 /db.pkl
-__pycache__/
+*__pycache__*
 *.py[cod]
-/strategies/__pycache__
+*.pyc

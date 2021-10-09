@@ -4,7 +4,7 @@ from indicators.slingshot import slingshot
 from indicators.stochRSI import stoch_rsi
 import get
 from indicators.lines import ewm, atr2
-from data import client_n as client
+from data import client_v as client
 from data import pairs_data, all_pairs
 from data import Pair
 from tqdm import tqdm
@@ -510,7 +510,7 @@ def fix_profit(pair: Pair, qty: float):
     trade_data['last_fix'] = c_time
 
     if trade_data['qty'] == 0:
-        res = pd.DataFrame([[pair.symbol, trade_data['start_trade'], trade_data['last_fix'],
+        res = pd.DataFrame([[pair.symbol, trade_data['start_date'], trade_data['last_fix'],
                             trade_data['ok'], trade_data['addon_times'], trade_data['fixed_times'], False,
                             trade_data['result']]], columns=['symbol', 'open date', 'close date', 'deal_type',
                                                              'addons', 'fixes', 'stop loss', 'result'])
@@ -620,7 +620,7 @@ def restore_trading_data(pairs):
         pair.in_trade = True
         trade_data = (df1.to_dict('records'))[0]
         pair.put_data(trade_data)
-        print(f'trade data for {pair.symbol} was restored')
+        print(f'trade data for {pair.symbol} was restored\n{pair.trade_data}')
     return pairs
 
 
