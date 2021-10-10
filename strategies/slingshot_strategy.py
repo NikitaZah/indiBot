@@ -4,7 +4,7 @@ from indicators.slingshot import slingshot
 from indicators.stochRSI import stoch_rsi
 import get
 from indicators.lines import ewm, atr2
-from data import client_n as client
+from data import client_v as client
 from data import pairs_data, all_pairs
 from data import Pair
 from tqdm import tqdm
@@ -18,7 +18,7 @@ from binance.client import Client
 from binance.exceptions import BinanceAPIException, BinanceRequestException
 
 deposit = 700
-dollars = 20    # percent of deposit
+dollars = 40    # percent of deposit
 leverage = 20
 
 statistics = pd.DataFrame(columns=['symbol', 'open date', 'close date', 'deal_type', 'addons', 'fixes',
@@ -195,7 +195,6 @@ def slingshot_strategy(restore: bool, trading_allowed: bool):
     pairs = []
 
     # get candles for symbols and create objects if pairs empty:
-
     for pair in tqdm(all_pairs, desc='getting candles'):
         candles_1h, candles_4h = pd.DataFrame(), pd.DataFrame()
         while candles_4h.empty:
@@ -255,6 +254,7 @@ def slingshot_strategy(restore: bool, trading_allowed: bool):
                 save_trading_data(pairs)
 
         update_time = pairs[0].candles_1h.loc[999, 'close_time']
+        first_symbol_updated = None
 
         # update statistics at midnight
         if datetime.fromtimestamp(update_time/1000).hour == 0:
@@ -265,15 +265,18 @@ def slingshot_strategy(restore: bool, trading_allowed: bool):
             candles_1h = pd.DataFrame()
             candles_4h = pd.DataFrame()
             for pair in pairs:
+
+                if first_symbol_updated == pair.symbol:     # new hour started and we have updated all candles
+                    break
+
                 while candles_1h.empty:
                     candles_1h = get.candles(client, pair.symbol, '1h', limit=1000)
                     if candles_1h.empty:
                         time.sleep(3)
                 pair.put_candles('1h', candles_1h)
 
-                # if new hour started and we are checking not the first symbol, we start from the beginning
-                if candles_1h.loc[999, 'open_time'] > update_time and pair.symbol != 'ETHUSDT':
-                    break
+                if candles_1h.loc[999, 'open_time'] > update_time and not first_symbol_updated:
+                    first_symbol_updated = pair.symbol
 
                 while candles_4h.empty:
                     candles_4h = get.candles(client, pair.symbol, '4h', limit=1000)
@@ -281,7 +284,6 @@ def slingshot_strategy(restore: bool, trading_allowed: bool):
                         time.sleep(3)
                 pair.put_candles('4h', candles_4h)
 
-                open_time = datetime.fromtimestamp(pairs[0].candles_1h.loc[999, "open_time"] / 1000)
                 if pair.in_trade:
                     counter += 1
                     trade_data = check_stop_loss(pair)
@@ -294,13 +296,14 @@ def slingshot_strategy(restore: bool, trading_allowed: bool):
                     qty = check_position(pair)
                     if qty > 0:
                         trade_data = fix_profit(pair, qty)
-                        pair.clear_data()
-                        pair.put_data(trade_data)
-                        print(f'{pair.symbol}: fixed profit')
-                        save_trading_data(pairs)
                         if not trade_data:
                             pair.in_trade = False
+                            pair.clear_data()
                             print(f'position for {pair.symbol} was completely closed')
+                        else:
+                            pair.put_data(trade_data)
+                            print(f'{pair.symbol}: fixed profit')
+                        save_trading_data(pairs)
 
                 time.sleep(1)
             if pairs[0].candles_1h.loc[999, 'open_time'] > update_time:
@@ -340,13 +343,12 @@ def signal(pair: Pair):
     length = pair.candles_1h['close'].size
     ema_slow = ewm(pair.candles_1h['close'], 62)
     k_line, d_line = stoch_rsi(pair.candles_1h, 14)    # убрать iloc при реальных торгах
-
     if trend == 1:
-        if d_line[d_line.size-1] < k_line[k_line.size-1] <= 20:
+        if d_line[d_line.size-1] < k_line[k_line.size-1] < 20:
             if pair.candles_1h['close'][length-2] < ema_slow[ema_slow.size-2]:
                 return True
     else:
-        if d_line[d_line.size-1] > k_line[k_line.size-1] >= 80:
+        if d_line[d_line.size-1] > k_line[k_line.size-1] > 80:
             if pair.candles_1h['close'][length-2] > ema_slow[ema_slow.size-2]:
                 return True
     return False
@@ -427,18 +429,19 @@ def place_order(pair: Pair, order_kind: int):
 
 
 def define_qty(price: float):
-    acc_info = (client.futures_account_balance())[1]
-    curr_balance = float(acc_info['balance'])
-    available = float(acc_info['withdrawAvailable'])
-    orig_cash = dollars/100 * curr_balance * leverage
+    acc_info = client.futures_account_information()
+    maint_margin = float(acc_info['totalMaintMargin'])
+    total_margin = float(acc_info['totalMarginBalance'])
+    orig_cash = dollars/100 * total_margin
+    init_margin = 0.05 * orig_cash * leverage
     cash = orig_cash
-    if available / (orig_cash/leverage) < 5:
-        cash /= 2
-    if available / (orig_cash/leverage) < 4:
-        cash /= 2
-    if available / (orig_cash/leverage) < 3:
-        cash = 0
 
+    if maint_margin > total_margin - init_margin * 10:
+        cash /= 2
+    if maint_margin > total_margin - init_margin * 5:
+        cash /= 2
+    if maint_margin > total_margin - init_margin * 3:
+        cash = 0
     qty = cash/price
     return qty
 
@@ -450,11 +453,11 @@ def check_stop_loss(pair: Pair):
         sl_order = client.futures_get_order(symbol=pair.symbol, orderId=pair.trade_data['slId'])
     except BinanceAPIException as err:
         print(f'{pair.symbol} : {err}')
-
-
+        return trade_data
     except Exception as err:
         print(f'Error while getting sl order for {pair.symbol}, order id: {trade_data["slId"]}\n{err}')
         return trade_data
+
     if sl_order['status'] == 'FILLED':
         c_time = datetime.fromtimestamp(int(sl_order['updateTime']) / 1000)
         trade_data['result'] += trade_data['ok'] * trade_data['qty'] * float(sl_order['avgPrice'])
@@ -477,6 +480,7 @@ def check_position(pair: Pair):
     length = pair.candles_1h['open_time'].size
     c_time = datetime.fromtimestamp(int(pair.candles_1h.loc[length-1, 'open_time'])/1000)
     if current_trend.iloc[trend_length - 1] * pair.trade_data['ok'] < 0:
+        print(f'pair {pair.symbol} is trading contrtrend! Trend:\n{current_trend.tail(7)}')
         if pair.trade_data['ok'] == -1:
             if d_line[d_line.size - 1] < k_line[k_line.size - 1]:
                 return pair.trade_data['qty']
@@ -486,13 +490,13 @@ def check_position(pair: Pair):
     else:
         if pair.trade_data['ok'] == -1:
             if d_line[d_line.size - 1] < k_line[k_line.size - 1] < 20:
-                if not pd.isna(pair.trade_data['last_fix']):
+                if pd.isna(pair.trade_data['last_fix']):
                     return pair.trade_data['origQty'] / 6
                 elif pair.trade_data['last_fix'] < c_time - timedelta(hours=3):
                     return pair.trade_data['origQty'] / 6
         else:
             if d_line[d_line.size - 1] > k_line[k_line.size - 1] > 80:
-                if not pd.isna(pair.trade_data['last_fix']):
+                if pd.isna(pair.trade_data['last_fix']):
                     return pair.trade_data['origQty'] / 6
                 elif pair.trade_data['last_fix'] < c_time - timedelta(hours=3):
                     return pair.trade_data['origQty'] / 6
