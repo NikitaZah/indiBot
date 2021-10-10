@@ -4,7 +4,7 @@ from indicators.slingshot import slingshot
 from indicators.stochRSI import stoch_rsi
 import get
 from indicators.lines import ewm, atr2
-from data import client_v as client
+from data import client_n as client
 from data import pairs_data, all_pairs
 from data import Pair
 from tqdm import tqdm
@@ -15,6 +15,7 @@ from datetime import datetime, timedelta
 from binance.enums import *
 from binance.helpers import round_step_size
 from binance.client import Client
+from binance.exceptions import BinanceAPIException, BinanceRequestException
 
 deposit = 700
 dollars = 20    # percent of deposit
@@ -261,17 +262,24 @@ def slingshot_strategy(restore: bool, trading_allowed: bool):
 
         while True:
             counter = 0
+            candles_1h = pd.DataFrame()
+            candles_4h = pd.DataFrame()
             for pair in pairs:
-                candles_1h = get.candles(client, pair.symbol, '1h', limit=1000)
-                if not candles_1h.empty:
-                    pair.put_candles('1h', candles_1h)
+                while candles_1h.empty:
+                    candles_1h = get.candles(client, pair.symbol, '1h', limit=1000)
+                    if candles_1h.empty:
+                        time.sleep(3)
+                pair.put_candles('1h', candles_1h)
 
                 # if new hour started and we are checking not the first symbol, we start from the beginning
                 if candles_1h.loc[999, 'open_time'] > update_time and pair.symbol != 'ETHUSDT':
                     break
-                candles_4h = get.candles(client, pair.symbol, '4h', limit=1000)
-                if not candles_4h.empty:
-                    pair.put_candles('4h', candles_4h)
+
+                while candles_4h.empty:
+                    candles_4h = get.candles(client, pair.symbol, '4h', limit=1000)
+                    if candles_4h.empty:
+                        time.sleep(3)
+                pair.put_candles('4h', candles_4h)
 
                 open_time = datetime.fromtimestamp(pairs[0].candles_1h.loc[999, "open_time"] / 1000)
                 if pair.in_trade:
@@ -350,11 +358,6 @@ def place_order(pair: Pair, order_kind: int):
     qty = round_step_size(define_qty(price), pair.market_lot_size)
     if qty == 0:
         return trade_data
-    if not pair.in_trade:
-        sl_price = 0.92 * price if order_kind == 1 else 1.08 * price
-    else:
-        sl_price = (trade_data['last_add_price'] * trade_data['qty'] + price * qty) / (trade_data['qty'] + qty)
-    sl_price = round_step_size(sl_price, pair.price_filter)
     side = Client.SIDE_BUY if order_kind == 1 else Client.SIDE_SELL
     close_side = Client.SIDE_SELL if order_kind == 1 else Client.SIDE_BUY
 
@@ -378,25 +381,34 @@ def place_order(pair: Pair, order_kind: int):
         except Exception as err:
             print(f'cannot get recently created market order\nerror = {err}')
 
+    price = float(order['avgPrice'])
+    qty = float(order['executedQty'])
+
+    if not pair.in_trade:
+        sl_price = 0.92 * price if order_kind == 1 else 1.08 * price
+    else:
+        sl_price = (trade_data['last_add_price'] * trade_data['qty'] + price * qty) / (trade_data['qty'] + qty)
+    sl_price = round_step_size(sl_price, pair.price_filter)
+
     if not pair.in_trade:
         trade_data['start_date'] = datetime.fromtimestamp(int(order['updateTime']) / 1000)
-        trade_data['qty'] = float(order['executedQty'])
-        trade_data['origQty'] = trade_data['qty']
+        trade_data['qty'] = qty
+        trade_data['origQty'] = qty
         trade_data['addon_times'] = 1
         trade_data['ok'] = order_kind
         trade_data['last_fix'] = pd.NA
-        trade_data['last_fix_price'] = float(order['avgPrice'])
+        trade_data['last_fix_price'] = price
         trade_data['last_add'] = datetime.fromtimestamp(int(order['updateTime']) / 1000)
-        trade_data['last_add_price'] = float(order['avgPrice'])
+        trade_data['last_add_price'] = price
         trade_data['fixed_times'] = 0
-        trade_data['result'] = -order_kind * trade_data['origQty'] * trade_data['last_add_price']
+        trade_data['result'] = -order_kind * qty * price
     else:
-        trade_data['qty'] += float(order['executedQty'])
+        trade_data['qty'] += qty
         trade_data['origQty'] = trade_data['qty']
         trade_data['addon_times'] += 1
         trade_data['last_add'] = datetime.fromtimestamp(int(order['updateTime']) / 1000)
-        trade_data['last_add_price'] = float(order['avgPrice'])
-        trade_data['result'] -= order_kind * trade_data['origQty'] * trade_data['last_add_price']
+        trade_data['last_add_price'] = price
+        trade_data['result'] -= order_kind * qty * price
 
     for i in range(10):
         try:
@@ -405,6 +417,9 @@ def place_order(pair: Pair, order_kind: int):
             trade_data['stop_loss'] = sl_price
             trade_data['slId'] = sl_order['orderId']
             break
+        except BinanceAPIException as err:
+            print(f'{pair.symbol} : {err}\ntrying to move stop loss')
+            sl_price = sl_price - pair.price_filter if order_kind == 1 else sl_price + pair.price_filter
         except Exception as err:
             print(f'{pair.symbol}: ATTENTION! Cannot place stop loss!\n{err}')
 
@@ -433,6 +448,10 @@ def check_stop_loss(pair: Pair):
     trade_data = pair.extract_data()
     try:
         sl_order = client.futures_get_order(symbol=pair.symbol, orderId=pair.trade_data['slId'])
+    except BinanceAPIException as err:
+        print(f'{pair.symbol} : {err}')
+
+
     except Exception as err:
         print(f'Error while getting sl order for {pair.symbol}, order id: {trade_data["slId"]}\n{err}')
         return trade_data
@@ -467,13 +486,13 @@ def check_position(pair: Pair):
     else:
         if pair.trade_data['ok'] == -1:
             if d_line[d_line.size - 1] < k_line[k_line.size - 1] < 20:
-                if not pair.trade_data['last_fix']:
+                if not pd.isna(pair.trade_data['last_fix']):
                     return pair.trade_data['origQty'] / 6
                 elif pair.trade_data['last_fix'] < c_time - timedelta(hours=3):
                     return pair.trade_data['origQty'] / 6
         else:
             if d_line[d_line.size - 1] > k_line[k_line.size - 1] > 80:
-                if not pair.in_trade:
+                if not pd.isna(pair.trade_data['last_fix']):
                     return pair.trade_data['origQty'] / 6
                 elif pair.trade_data['last_fix'] < c_time - timedelta(hours=3):
                     return pair.trade_data['origQty'] / 6
