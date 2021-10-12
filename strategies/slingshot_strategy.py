@@ -442,8 +442,9 @@ def define_qty(price: float):
     acc_info = client.futures_account_information()
     maint_margin = float(acc_info['totalMaintMargin'])
     total_margin = float(acc_info['totalMarginBalance'])
-    orig_cash = dollars/100 * total_margin
-    init_margin = 0.05 * orig_cash * leverage
+    total_balance = float(acc_info['totalWalletBalance'])
+    orig_cash = dollars/100 * total_balance
+    init_margin = orig_cash / leverage
     cash = orig_cash
 
     if maint_margin < total_margin - init_margin * 7:
