@@ -491,9 +491,9 @@ def check_position(pair: Pair):
     length = pair.candles_1h['open_time'].size
     c_time = datetime.fromtimestamp(int(pair.candles_1h.loc[length-1, 'open_time'])/1000)
     if current_trend.iloc[trend_length - 1] * pair.trade_data['ok'] < 0:
-        print(f'pair {pair.symbol} is trading contrtrend! Trend:\n{current_trend.tail(7)}')
         if pair.trade_data['ok'] == -1:
             if d_line[d_line.size - 1] < k_line[k_line.size - 1]:
+                print(f'pair {pair.symbol} is trading contrtrend! Trend:\n{current_trend.tail(7)}')
                 return pair.trade_data['qty']
         else:
             if d_line[d_line.size - 1] > k_line[k_line.size - 1]:
