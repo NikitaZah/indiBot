@@ -447,11 +447,11 @@ def define_qty(price: float):
     init_margin = orig_cash / leverage
     cash = orig_cash
 
-    if maint_margin < total_margin - init_margin * 7:
+    if maint_margin > total_margin - init_margin * 7:
         cash /= 2
-    if maint_margin < total_margin - init_margin * 5:
+    if maint_margin > total_margin - init_margin * 5:
         cash /= 2
-    if maint_margin < total_margin - init_margin * 3:
+    if maint_margin > total_margin - init_margin * 3:
         cash = 0
     qty = cash/price
     return qty
