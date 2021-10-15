@@ -505,12 +505,17 @@ def check_position(pair: Pair):
                     return pair.trade_data['origQty'] / 6
                 elif pair.trade_data['last_fix'] < c_time - timedelta(hours=3):
                     return pair.trade_data['origQty'] / 6
+            elif pair.candles_1h.loc[length-1, 'close'] < 0.9 * pair.trade_data['last_fix_price']:
+                return pair.trade_data['origQty'] / 6
+
         else:
             if d_line[d_line.size - 1] > k_line[k_line.size - 1] > 80:
                 if pd.isna(pair.trade_data['last_fix']):
                     return pair.trade_data['origQty'] / 6
                 elif pair.trade_data['last_fix'] < c_time - timedelta(hours=3):
                     return pair.trade_data['origQty'] / 6
+            elif pair.candles_1h.loc[length-1, 'close'] > 1.1 * pair.trade_data['last_fix_price']:
+                return pair.trade_data['origQty'] / 6
     return 0
 
 
