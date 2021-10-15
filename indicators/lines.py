@@ -39,3 +39,8 @@ def atr2(source: pd.DataFrame, length: int) -> pd.DataFrame:
 def hl2(source: pd.DataFrame) -> pd.DataFrame:
     hl_avg = (source['high']+source['low'])/2
     return hl_avg
+
+
+def hlc3(source: pd.DataFrame) -> pd.DataFrame:
+    hlc = (source['high']+source['low']+source['close'])/3
+    return hlc
