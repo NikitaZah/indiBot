@@ -528,10 +528,15 @@ def fix_profit(pair: Pair, qty: float):
         qty = pair.market_lot_size
 
     fixed = None
-    for i in range(3):
+    for i in range(5):
         try:
             fixed = client.futures_create_order(symbol=pair.symbol, type=Client.FUTURE_ORDER_TYPE_MARKET,
                                                 side=close_side, quantity=qty)
+        except BinanceAPIException as err:
+            if int(err.code) == -4164:
+                qty += pair.market_lot_size
+            else:
+                time.sleep(3)
         except Exception as err:
             print(f'{pair.symbol} : {err}\nFAILED to fix profit')
             time.sleep(5)
