@@ -535,7 +535,7 @@ def fix_profit(pair: Pair, qty: float):
             break
         except BinanceAPIException as err:
             if int(err.code) == -4164:
-                qty += pair.market_lot_size
+                qty = trade_data['qty']
             else:
                 time.sleep(3)
         except Exception as err:
@@ -583,6 +583,7 @@ def fix_profit(pair: Pair, qty: float):
                 try:
                     sl_order = client.futures_create_order(symbol=pair.symbol, side=close_side, stopPrice=sl_price,
                                                            closePosition=True, type=Client.FUTURE_ORDER_TYPE_STOP_MARKET)
+                    break
                 except BinanceAPIException as err:
                     print(f'{pair.symbol} : {err}\ntrying to move stop loss')
                     sl_price = sl_price - pair.price_filter if trade_data['ok'] == 1 else sl_price + pair.price_filter
