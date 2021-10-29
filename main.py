@@ -4,7 +4,7 @@ from strategies.net_strategy import net
 
 
 def main():
-    net()
+    net(1.5)
 
 
 if __name__ == '__main__':
