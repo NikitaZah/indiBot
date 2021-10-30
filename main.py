@@ -4,7 +4,7 @@ from strategies.net_strategy import net
 
 
 def main():
-    net(diameter=1.3)
+    net(diameter=1.0)
 
 
 if __name__ == '__main__':

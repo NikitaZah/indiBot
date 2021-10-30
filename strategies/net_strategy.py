@@ -19,7 +19,7 @@ def net(diameter: float):
     pair = Pair(symbol=symbol)
     lev = client.futures_change_leverage(symbol=pair.symbol, leverage=20)
     if diameter:
-        diameter /=100
+        diameter /= 100
     while True:
         acc_info = client.futures_account_information()
         total_balance = float(acc_info['totalWalletBalance'])
