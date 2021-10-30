@@ -11,13 +11,15 @@ import pandas as pd
 
 tf = '15m'
 symbol = '1000SHIBUSDT'
-base_percent = 3.5
+base_percent = 5
 max_lines = 11
 
 
 def net(diameter: float):
     pair = Pair(symbol=symbol)
     lev = client.futures_change_leverage(symbol=pair.symbol, leverage=20)
+    if diameter:
+        diameter /=100
     while True:
         acc_info = client.futures_account_information()
         total_balance = float(acc_info['totalWalletBalance'])
@@ -41,8 +43,6 @@ def net(diameter: float):
                 print('too small volatility! Please choose another symbol')
                 return 0
             print(f'our current diameter = {d * 100}%')
-        else:
-            diameter /= 100
 
         trade_data = create_base_orders(pair, diameter, base_bet)
         if not trade_data:
@@ -159,16 +159,18 @@ def create_net(pair, side, diameter):
             print(f'error occurred during getting first pose order\nerr={err}')
     print(first_pose)
     if side == client.SIDE_BUY:
-        prices_net = [round_step_size(float(first_pose['avgPrice']) * (1 - i * diameter), pair.price_filter) for i in range(9)]
+        prices_net = [round_step_size(float(first_pose['avgPrice']) * (1 - i * diameter), pair.price_filter) for i in range(max_lines)]
     else:
-        prices_net = [round_step_size(float(first_pose['avgPrice']) * (1 + i * diameter), pair.price_filter) for i in range(9)]
+        prices_net = [round_step_size(float(first_pose['avgPrice']) * (1 + i * diameter), pair.price_filter) for i in range(max_lines)]
 
+    print(f'price net:\n{prices_net}')
     cum_quote = [float(first_pose['cumQuote'])]
     qty = [float(first_pose['executedQty'])]
     for i in range(1, max_lines-1):
         cum_quote.append(sum(cum_quote) * 1.01)
         quantity = cum_quote[i] / prices_net[i]
         qty.append(round_step_size(quantity, pair.market_lot_size) + 1)
+    print(f'qty:\n{qty}')
 
     tp_price = (1+diameter) * float(first_pose['avgPrice']) if side == client.SIDE_BUY \
         else (1-diameter) * float(first_pose['avgPrice'])
