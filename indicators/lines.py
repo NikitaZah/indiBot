@@ -44,3 +44,10 @@ def hl2(source: pd.DataFrame) -> pd.DataFrame:
 def hlc3(source: pd.DataFrame) -> pd.DataFrame:
     hlc = (source['high']+source['low']+source['close'])/3
     return hlc
+
+
+def idv(source: pd.DataFrame):
+    true_volatility = source['high'].max() - source['low'].min()
+    candles_true_length = (source['high']-source['low']).sum()
+    intraday_volatility = candles_true_length/true_volatility
+    return intraday_volatility

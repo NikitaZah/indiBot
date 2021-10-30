@@ -7,15 +7,30 @@ from data import pairs_data, all_pairs
 from data import Pair
 import time
 import pandas as pd
+from indicators.lines import idv
+from tqdm import tqdm
 
 
 tf = '15m'
-symbol = '1000SHIBUSDT'
+symbol = 'MANAUSDT'
 base_percent = 5
 max_lines = 11
 
 
+def check_idv():
+    inday = []
+    for pair in tqdm(all_pairs):
+        candles = get.candles(client, pair, '1m', limit=600)
+        intraday = idv(candles)
+        print(f'pair: {pair}')
+        print(intraday)
+        inday.append((pair, intraday))
+
+    print(inday.sort(key=lambda x: x[1]))
+
+
 def net(diameter: float):
+    #check_idv()
     pair = Pair(symbol=symbol)
     lev = client.futures_change_leverage(symbol=pair.symbol, leverage=20)
     if diameter:
@@ -29,8 +44,8 @@ def net(diameter: float):
         if not diameter:
             candles = pd.DataFrame()
             while candles.empty:
-                candles = get.candles(client, symbol=symbol, interval='15m', limit=100)
-
+                candles = get.candles(client, symbol=symbol, interval='1m', limit=2880)
+                print(idv(candles, 60))
             max_volatility = (candles['high'].max() - candles['low'].min())/candles['low'].min()
             print(max_volatility)
             if 0.3 <= max_volatility:
