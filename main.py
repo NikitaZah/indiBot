@@ -4,7 +4,7 @@ from strategies.net_strategy import net
 
 
 def main():
-    net(diameter=3)
+    slingshot_strategy(restore=True, trading_allowed=True)
 
 
 if __name__ == '__main__':

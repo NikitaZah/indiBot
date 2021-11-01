@@ -17,9 +17,9 @@ from binance.helpers import round_step_size
 from binance.client import Client
 from binance.exceptions import BinanceAPIException, BinanceRequestException
 
-deposit = 700
-dollars = 40    # percent of deposit
+dollars = 35   # percent of deposit
 leverage = 20
+main_trend = 1
 
 statistics = pd.DataFrame(columns=['symbol', 'open date', 'close date', 'deal_type', 'addons', 'fixes',
                                              'stop loss', 'result'])
@@ -220,7 +220,7 @@ def slingshot_strategy(restore: bool, trading_allowed: bool):
         if trading_allowed:
             for pair in pairs:
                 if pair.symbol == 'BTCUSDT':
-                    main_trend = get_main_trend(pair)
+                    # main_trend = get_main_trend(pair)
                     continue
 
                 # checking pair volume and volatility
@@ -357,7 +357,7 @@ def signal(pair: Pair):
 def place_order(pair: Pair, order_kind: int):
     trade_data = pair.extract_data()
     price = pair.candles_1h['close'].iloc[pair.candles_1h['close'].size-1]
-    qty = round_step_size(define_qty(price), pair.market_lot_size)
+    qty = round_step_size(define_qty(pair, price), pair.market_lot_size)
     if qty == 0:
         print(f'{pair.symbol} is too expensive!\nprice: {price}, market lot size: {pair.market_lot_size}')
         return trade_data
@@ -433,12 +433,13 @@ def place_order(pair: Pair, order_kind: int):
     if pair.in_trade:   # cancel old stop loss order after new was created
         cancel_order(pair.symbol, trade_data['slId'])
 
+
     trade_data['stop_loss'] = sl_price
     trade_data['slId'] = sl_order['orderId']
     return trade_data
 
 
-def define_qty(price: float):
+def define_qty(pair: Pair, price: float):
     acc_info = client.futures_account_information()
     maint_margin = float(acc_info['totalMaintMargin'])
     total_margin = float(acc_info['totalMarginBalance'])
@@ -557,7 +558,7 @@ def fix_profit(pair: Pair, qty: float):
     trade_data['last_fix_price'] = price
     trade_data['last_fix'] = c_time
 
-    if trade_data['qty'] == 0:
+    if trade_data['qty'] <= 0:
         res = pd.DataFrame([[pair.symbol, trade_data['start_date'], trade_data['last_fix'],
                             trade_data['ok'], trade_data['addon_times'], trade_data['fixed_times'], False,
                             trade_data['result']]], columns=['symbol', 'open date', 'close date', 'deal_type',
