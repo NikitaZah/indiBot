@@ -4,7 +4,7 @@ from indicators.slingshot import slingshot
 from indicators.stochRSI import stoch_rsi
 import get
 from indicators.lines import ewm, atr2
-from data import client_v as client
+from data import client_d as client
 from data import pairs_data, all_pairs
 from data import Pair
 from tqdm import tqdm

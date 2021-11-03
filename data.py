@@ -12,9 +12,14 @@ api_key_v = config.get('BINANCE', 'API_KEY_V')
 api_secret_v = config.get('BINANCE', 'API_SECRET_V')
 api_key_n = config.get('BINANCE', 'API_KEY_N')
 api_secret_n = config.get('BINANCE', 'API_SECRET_N')
+api_key_d = config.get('BINANCE', 'API_KEY_D')
+api_secret_d = config.get('BINANCE', 'API_SECRET_D')
 
 client_v = Client(api_key_v, api_secret_v)
 client_n = Client(api_key_n, api_secret_n)
+client_d = Client(api_key_d, api_secret_d)
+
+
 
 
 class Pair:
