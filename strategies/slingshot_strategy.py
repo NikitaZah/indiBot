@@ -17,7 +17,7 @@ from binance.helpers import round_step_size
 from binance.client import Client
 from binance.exceptions import BinanceAPIException, BinanceRequestException
 
-dollars = 30   # percent of deposit
+dollars = 25   # percent of deposit
 leverage = 20
 main_trend = 1
 
